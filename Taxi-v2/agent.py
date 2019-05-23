@@ -13,9 +13,9 @@ class Agent:
         self.nA = nA
         self.Q = defaultdict(lambda: np.zeros(self.nA))
         self.policy_s= defaultdict(lambda: np.ones(self.nA)/ self.nA)
-        self.epsilon = 0.001
+        self.epsilon = 0
         self.gamma = 1
-        self.alpha = 0.01
+        self.alpha = 0.1
 
     def select_action(self, state):
         """ Given the state, select an action.
