@@ -28,6 +28,7 @@ class Agent:
         =======
         - action: an integer, compatible with the task's action space
         """
+        self.policy_s[state] = self._epsilon_greedy_probs(self.Q[state], 1, self.epsilon)
         
         return np.random.choice(self.nA, p=self.policy_s[state])
     
@@ -56,7 +57,5 @@ class Agent:
         - next_state: the current state of the environment
         - done: whether the episode is complete (True or False)
         """
-        
-        self.policy_s[next_state] = self._epsilon_greedy_probs(self.policy_s[next_state], self.Q[next_state], 1, self.epsilon)
         
         self.Q[state][action] = self._update_Q(self.Q[state][action], np.dot(self.Q[next_state], self.policy_s[next_state]), reward, self.alpha, self.gamma)
