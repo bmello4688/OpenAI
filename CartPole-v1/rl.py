@@ -70,7 +70,7 @@ def pretrain_memory(env, memory, state, pretrain_length=20):
             memory.add((state, action, reward, next_state))
             state = next_state
 
-def train_and_save(env, sess, mainQN, memory, state, batch_size):
+def train_and_save(env, sess, mainQN, memory, batch_size):
 
     train_episodes = 1000          # max number of episodes to learn from
     max_steps = 200                # max steps in an episode
