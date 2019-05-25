@@ -37,18 +37,13 @@ pretrain_length = batch_size   # number experiences to pretrain the memory
 tf.reset_default_graph()
 mainQN = QNetwork(name='main', hidden_size=hidden_size, learning_rate=learning_rate)
 
-# Initialize the simulation
-env.reset()
-# Take one random step to get the pole and cart moving
-state, reward, done, _ = env.step(env.action_space.sample())
-
 memory = Memory(max_size=memory_size)
 
 pretrain_memory(env, memory, state, pretrain_length)
 
 # Now train with experiences
 with tf.Session() as sess:
-    train_and_save(sess)
+    rewards_list = train_and_save(env, sess, mainQN, memory, batch_size)
 
 
 def running_mean(x, N):

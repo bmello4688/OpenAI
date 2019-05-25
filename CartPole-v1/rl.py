@@ -81,6 +81,11 @@ def train_and_save(env, sess, mainQN, memory, state, batch_size):
     explore_stop = 0.01            # minimum exploration probability 
     decay_rate = 0.0001            # exponential decay rate for exploration prob
 
+    # Initialize the simulation
+    env.reset()
+    # Take one random step to get the pole and cart moving
+    state, reward, done, _ = env.step(env.action_space.sample())
+
     # Initialize variables
     sess.run(tf.global_variables_initializer())
     
@@ -159,4 +164,5 @@ def train_and_save(env, sess, mainQN, memory, state, batch_size):
                                            mainQN.actions_: actions})
         
     saver.save(sess, "checkpoints/cartpole.ckpt")
+    return rewards_list
             
