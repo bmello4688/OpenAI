@@ -1,4 +1,5 @@
 import tensorflow as tf
+from collections import deque
 
 class QNetwork:
     def __init__(self, learning_rate=0.01, state_size=4, 
@@ -30,4 +31,18 @@ class QNetwork:
             
             self.loss = tf.reduce_mean(tf.square(self.targetQs_ - self.Q))
             self.opt = tf.train.AdamOptimizer(learning_rate).minimize(self.loss)
+
+
+class Memory():
+    def __init__(self, max_size=1000):
+        self.buffer = deque(maxlen=max_size)
+    
+    def add(self, experience):
+        self.buffer.append(experience)
+            
+    def sample(self, batch_size):
+        idx = np.random.choice(np.arange(len(self.buffer)), 
+                               size=batch_size, 
+                               replace=False)
+        return [self.buffer[ii] for ii in idx]
             
