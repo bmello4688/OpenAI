@@ -1,4 +1,4 @@
-import tensorflow as tf
+from keras import Sequential
 import numpy as np
 import os
 from collections import deque
