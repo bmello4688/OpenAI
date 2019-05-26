@@ -1,11 +1,22 @@
 import tensorflow as tf
 import numpy as np
+import os
 from collections import deque
+
+def _get_path():
+    current_dir = os.path.abspath('.')
+    if 'CartPole-v1' in current_dir:
+        current_dir = current_dir.replace('CartPole-v1', '')
+    path = current_dir + "/CartPole-v1/checkpoints/cartpole.ckpt"
+    return path
+
+_weightsFilePath = _get_path()
 
 class QNetwork:
     def __init__(self, learning_rate=0.01, state_size=4, 
                  action_size=2, hidden_size=10, 
                  name='QNetwork'):
+        tf.reset_default_graph()
         # state inputs to the Q-network
         with tf.variable_scope(name):
             self.inputs_ = tf.placeholder(tf.float32, [None, state_size], name='inputs')
@@ -47,7 +58,9 @@ class Memory():
                                replace=False)
         return [self.buffer[ii] for ii in idx]
 
-def pretrain_memory(env, memory, state, pretrain_length=20):
+def _pretrain_memory(env, memory, pretrain_length=20):
+
+    state = env.reset()
     # Make a bunch of random actions and store the experiences
     for ii in range(pretrain_length):
 
@@ -70,7 +83,7 @@ def pretrain_memory(env, memory, state, pretrain_length=20):
             memory.add((state, action, reward, next_state))
             state = next_state
 
-def train_and_save(env, sess, mainQN, memory, batch_size):
+def train_and_save(env, sess, mainQN):
 
     train_episodes = 1000          # max number of episodes to learn from
     max_steps = 200                # max steps in an episode
@@ -80,6 +93,14 @@ def train_and_save(env, sess, mainQN, memory, batch_size):
     explore_start = 1.0            # exploration probability at start
     explore_stop = 0.01            # minimum exploration probability 
     decay_rate = 0.0001            # exponential decay rate for exploration prob
+
+    # Memory parameters
+    memory_size = 10000            # memory capacity
+    batch_size = 20                # experience mini-batch size
+
+    memory = Memory(max_size=memory_size)
+
+    _pretrain_memory(env, memory, batch_size)
 
     # Initialize the simulation
     env.reset()
@@ -163,6 +184,15 @@ def train_and_save(env, sess, mainQN, memory, batch_size):
                                            mainQN.targetQs_: targets,
                                            mainQN.actions_: actions})
         
-    saver.save(sess, "checkpoints/cartpole.ckpt")
+    saver.save(sess, _weightsFilePath)
+    print("Model saved")
     return rewards_list
+
+def load_model(sess):
+    saver = tf.train.Saver()
+    saver.restore(sess, _weightsFilePath)
+    print("Model restored")
+
+def are_weights_saved():
+    return os.path.exists(_weightsFilePath+ '.meta')
             
