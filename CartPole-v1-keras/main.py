@@ -32,24 +32,23 @@ learning_rate = 0.0001         # Q-network learning rate
 mainQN = QNetwork(name='main', hidden_size=hidden_size, learning_rate=learning_rate)
 
 # Now train with experiences
-with tf.Session() as sess:
-    if are_weights_saved():
-        load_model(sess)
-    else:
-        rewards_list = train_and_save(env, sess, mainQN)
+if are_weights_saved():
+    load_model(sess)
+else:
+    rewards_list = train_and_save(env, sess, mainQN)
 
 
-        def running_mean(x, N):
-            cumsum = np.cumsum(np.insert(x, 0, 0)) 
-            return (cumsum[N:] - cumsum[:-N]) / N 
+    def running_mean(x, N):
+        cumsum = np.cumsum(np.insert(x, 0, 0)) 
+        return (cumsum[N:] - cumsum[:-N]) / N 
 
-        eps, rews = np.array(rewards_list).T
-        smoothed_rews = running_mean(rews, 10)
-        plt.plot(eps[-len(smoothed_rews):], smoothed_rews)
-        plt.plot(eps, rews, color='grey', alpha=0.3)
-        plt.xlabel('Episode')
-        plt.ylabel('Total Reward')
-        plt.show()
+    eps, rews = np.array(rewards_list).T
+    smoothed_rews = running_mean(rews, 10)
+    plt.plot(eps[-len(smoothed_rews):], smoothed_rews)
+    plt.plot(eps, rews, color='grey', alpha=0.3)
+    plt.xlabel('Episode')
+    plt.ylabel('Total Reward')
+    plt.show()
 
     state = env.reset()
 
