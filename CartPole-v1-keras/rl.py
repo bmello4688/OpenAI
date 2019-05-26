@@ -1,4 +1,5 @@
-from keras import Sequential
+from keras.models import Sequential
+from keras.layers import Dense, Activation
 import numpy as np
 import os
 from collections import deque
