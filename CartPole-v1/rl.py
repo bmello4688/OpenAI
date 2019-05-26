@@ -44,6 +44,13 @@ class QNetwork:
             self.loss = tf.reduce_mean(tf.square(self.targetQs_ - self.Q))
             self.opt = tf.train.AdamOptimizer(learning_rate).minimize(self.loss)
 
+    def get_action(self, sess, state):
+        # Get action from Q-network
+        feed = {self.inputs_: state.reshape((1, *state.shape))}
+        Qs = sess.run(self.output, feed_dict=feed)
+        action = np.argmax(Qs)
+        return action
+
 
 class Memory():
     def __init__(self, max_size=1000):
@@ -128,10 +135,7 @@ def train_and_save(env, sess, mainQN):
                 # Make a random action
                 action = env.action_space.sample()
             else:
-                # Get action from Q-network
-                feed = {mainQN.inputs_: state.reshape((1, *state.shape))}
-                Qs = sess.run(mainQN.output, feed_dict=feed)
-                action = np.argmax(Qs)
+                action = mainQN.get_action(sess, state)
             
             # Take action, get new state and reward
             next_state, reward, done, _ = env.step(action)

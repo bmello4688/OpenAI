@@ -51,3 +51,12 @@ with tf.Session() as sess:
         plt.xlabel('Episode')
         plt.ylabel('Total Reward')
         plt.show()
+
+    state = env.reset()
+
+    while True:
+        action = mainQN.get_action(sess, state)
+        state, reward, done, _ = env.step(action)
+        env.render()
+        if done:
+            break
