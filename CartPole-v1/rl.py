@@ -7,8 +7,8 @@ def _get_path():
     current_dir = os.path.abspath('.')
     if 'CartPole-v1' in current_dir:
         current_dir = current_dir.replace('CartPole-v1', '')
-    path = current_dir + "/CartPole-v1/checkpoints/cartpole.ckpt"
-    return path
+    path = current_dir + "/CartPole-v1/"
+    return path + 'checkpoints/cartpole.ckpt'
 
 _weightsFilePath = _get_path()
 
@@ -43,6 +43,10 @@ class QNetwork:
             
             self.loss = tf.reduce_mean(tf.square(self.targetQs_ - self.Q))
             self.opt = tf.train.AdamOptimizer(learning_rate).minimize(self.loss)
+        
+        writer = tf.summary.FileWriter(_get_path())
+        writer.add_graph(tf.get_default_graph())
+        writer.flush()
 
     def get_action(self, sess, state):
         # Get action from Q-network

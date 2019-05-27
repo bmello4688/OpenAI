@@ -33,9 +33,9 @@ mainQN = QNetwork(name='main', hidden_size=hidden_size, learning_rate=learning_r
 
 # Now train with experiences
 if are_weights_saved():
-    load_model(sess)
+    load_model()
 else:
-    rewards_list = train_and_save(env, sess, mainQN)
+    rewards_list = train_and_save(env, mainQN)
 
 
     def running_mean(x, N):
@@ -55,7 +55,7 @@ else:
     rewards_list = []
     while True:
         env.render()
-        action = mainQN.get_action(sess, state)
+        action = mainQN.get_action(state)
         state, reward, done, _ = env.step(action)
         rewards_list.append(reward)
         if done:
