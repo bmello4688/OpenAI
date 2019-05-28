@@ -2,3 +2,4 @@
 **/obj/*
 **/Lib/*
 **/__pycache__/*
+**/events.out.tfevents.*

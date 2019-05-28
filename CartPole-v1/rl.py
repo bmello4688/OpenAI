@@ -3,30 +3,20 @@ import numpy as np
 import os
 from collections import deque
 
-def _get_path():
-    current_dir = os.path.abspath('.')
-    if 'CartPole-v1' in current_dir:
-        current_dir = current_dir.replace('CartPole-v1', '')
-    path = current_dir + "/CartPole-v1/"
-    return path + 'checkpoints/cartpole.ckpt'
-
-_weightsFilePath = _get_path()
-
 class QNetwork:
-    def __init__(self, learning_rate=0.01, state_size=4, 
+    def __init__(self, name, weight_path, learning_rate=0.01, state_size=4, 
                  action_size=2, hidden_size=10, 
-                 name='QNetwork'):
-        tf.reset_default_graph()
+                 ):
+        def _get_caller_path(weight_path):
+            if os.path.isfile(weight_path):
+                weight_path = os.path.dirname(os.path.realpath(weight_path)) + '\\'
+            return weight_path
+        self._caller_path = _get_caller_path(weight_path)
+        self._weightsFilePath = '{}checkpoints/{}.ckpt'.format(self._caller_path, name)
+        self.graph = tf.Graph()
         # state inputs to the Q-network
-        with tf.variable_scope(name):
+        with self.graph.as_default():
             self.inputs_ = tf.placeholder(tf.float32, [None, state_size], name='inputs')
-            
-            # One hot encode the actions to later choose the Q-value for the action
-            self.actions_ = tf.placeholder(tf.int32, [None], name='actions')
-            one_hot_actions = tf.one_hot(self.actions_, action_size)
-            
-            # Target Q values for training
-            self.targetQs_ = tf.placeholder(tf.float32, [None], name='target')
             
             # ReLU hidden layers
             self.fc1 = tf.contrib.layers.fully_connected(self.inputs_, hidden_size)
@@ -36,6 +26,13 @@ class QNetwork:
             self.output = tf.contrib.layers.fully_connected(self.fc2, action_size, 
                                                             activation_fn=None)
             
+            # One hot encode the actions to later choose the Q-value for the action
+            self.actions_ = tf.placeholder(tf.int32, [None], name='actions')
+            one_hot_actions = tf.one_hot(self.actions_, action_size)
+            
+            # Target Q values for training
+            self.targetQs_ = tf.placeholder(tf.float32, [None], name='target')
+
             ### Train with loss (targetQ - Q)^2
             # output has length 2, for two actions. This next line chooses
             # one value from output (per row) according to the one-hot encoded actions.
@@ -43,17 +40,55 @@ class QNetwork:
             
             self.loss = tf.reduce_mean(tf.square(self.targetQs_ - self.Q))
             self.opt = tf.train.AdamOptimizer(learning_rate).minimize(self.loss)
+
+            self.session = tf.Session()
+            #Initialize variables
+            self.session.run(tf.global_variables_initializer())
+            self.saver = tf.train.Saver()
         
-        writer = tf.summary.FileWriter(_get_path())
-        writer.add_graph(tf.get_default_graph())
+        #save graph for tensorboard
+        writer = tf.summary.FileWriter(self._caller_path + 'tensorboard')
+        writer.add_graph(self.graph)
         writer.flush()
 
-    def get_action(self, sess, state):
+    def save_weights(self):
+        self.saver.save(self.session, self._weightsFilePath)
+        print("Model restored")
+
+    def load_weights(self):
+        self.saver.restore(self.session, self._weightsFilePath)
+        print("Model restored")
+
+    def are_weights_saved(self):
+        return os.path.exists(self._weightsFilePath+ '.meta')
+
+    def get_Qs(self, state):
         # Get action from Q-network
-        feed = {self.inputs_: state.reshape((1, *state.shape))}
-        Qs = sess.run(self.output, feed_dict=feed)
+        feed = {self.inputs_: state}
+        Qs = self.session.run(self.output, feed_dict=feed)
+        return Qs
+
+    def get_action(self, state):
+        Qs = self.get_Qs(state.reshape((1, *state.shape)))
         action = np.argmax(Qs)
         return action
+
+    def train_on_batch(self, states, actions, rewards, next_states, gamma=0.99):
+        # Train network
+        target_Qs = self.get_Qs(next_states)
+            
+        # Set target_Qs to 0 for states where episode ends
+        episode_ends = (next_states == np.zeros(states[0].shape)).all(axis=1)
+        target_Qs[episode_ends] = (0, 0)
+            
+        targets = rewards + gamma * np.max(target_Qs, axis=1)
+
+        loss, _ = self.session.run([self.loss, self.opt],
+                                feed_dict={self.inputs_: states,
+                                           self.targetQs_: targets,
+                                           self.actions_: actions})
+
+        return loss
 
 
 class Memory():
@@ -94,7 +129,7 @@ def _pretrain_memory(env, memory, pretrain_length=20):
             memory.add((state, action, reward, next_state))
             state = next_state
 
-def train_and_save(env, sess, mainQN):
+def train_and_save(env, mainQN):
 
     train_episodes = 1000          # max number of episodes to learn from
     max_steps = 200                # max steps in an episode
@@ -118,10 +153,6 @@ def train_and_save(env, sess, mainQN):
     # Take one random step to get the pole and cart moving
     state, reward, done, _ = env.step(env.action_space.sample())
 
-    # Initialize variables
-    sess.run(tf.global_variables_initializer())
-    
-    saver = tf.train.Saver()
     rewards_list = []
     step = 0
     loss = None
@@ -139,7 +170,7 @@ def train_and_save(env, sess, mainQN):
                 # Make a random action
                 action = env.action_space.sample()
             else:
-                action = mainQN.get_action(sess, state)
+                action = mainQN.get_action(state)
             
             # Take action, get new state and reward
             next_state, reward, done, _ = env.step(action)
@@ -178,29 +209,7 @@ def train_and_save(env, sess, mainQN):
             rewards = np.array([each[2] for each in batch])
             next_states = np.array([each[3] for each in batch])
             
-            # Train network
-            target_Qs = sess.run(mainQN.output, feed_dict={mainQN.inputs_: next_states})
-            
-            # Set target_Qs to 0 for states where episode ends
-            episode_ends = (next_states == np.zeros(states[0].shape)).all(axis=1)
-            target_Qs[episode_ends] = (0, 0)
-            
-            targets = rewards + gamma * np.max(target_Qs, axis=1)
-
-            loss, _ = sess.run([mainQN.loss, mainQN.opt],
-                                feed_dict={mainQN.inputs_: states,
-                                           mainQN.targetQs_: targets,
-                                           mainQN.actions_: actions})
+            loss = mainQN.train_on_batch(states, actions, rewards, next_states, gamma)
         
-    saver.save(sess, _weightsFilePath)
-    print("Model saved")
     return rewards_list
-
-def load_model(sess):
-    saver = tf.train.Saver()
-    saver.restore(sess, _weightsFilePath)
-    print("Model restored")
-
-def are_weights_saved():
-    return os.path.exists(_weightsFilePath+ '.meta')
             
