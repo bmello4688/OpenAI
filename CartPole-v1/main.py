@@ -50,14 +50,15 @@ else:
     plt.ylabel('Total Reward')
     plt.show()
 
-    state = env.reset()
+state = env.reset()
+rewards_list = 0
+while True:
+    env.render()
+    action = mainQN.get_action(state)
+    state, reward, done, _ = env.step(action)
+    rewards_list += reward
+    if done:
+        print("Episode finished after {0} steps".format(rewards_list))
+        break
 
-    rewards_list = []
-    while True:
-        env.render()
-        action = mainQN.get_action(state)
-        state, reward, done, _ = env.step(action)
-        rewards_list.append(reward)
-        if done:
-            print("Episode finished after {0} steps".format(len(rewards_list)))
-            break
+mainQN.close()

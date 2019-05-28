@@ -21,9 +21,10 @@ class QNetwork:
             # ReLU hidden layers
             self.fc1 = tf.contrib.layers.fully_connected(self.inputs_, hidden_size)
             self.fc2 = tf.contrib.layers.fully_connected(self.fc1, hidden_size)
+            self.fc3 = tf.contrib.layers.fully_connected(self.fc2, hidden_size)
 
             # Linear output layer
-            self.output = tf.contrib.layers.fully_connected(self.fc2, action_size, 
+            self.output = tf.contrib.layers.fully_connected(self.fc3, action_size, 
                                                             activation_fn=None)
             
             # One hot encode the actions to later choose the Q-value for the action
@@ -50,10 +51,11 @@ class QNetwork:
         writer = tf.summary.FileWriter(self._caller_path + 'tensorboard')
         writer.add_graph(self.graph)
         writer.flush()
+        writer.close()
 
     def save_weights(self):
         self.saver.save(self.session, self._weightsFilePath)
-        print("Model restored")
+        print("Model saved")
 
     def load_weights(self):
         self.saver.restore(self.session, self._weightsFilePath)
@@ -89,6 +91,9 @@ class QNetwork:
                                            self.actions_: actions})
 
         return loss
+
+    def close(self):
+        self.session.close()
 
 
 class Memory():
@@ -210,6 +215,8 @@ def train_and_save(env, mainQN):
             next_states = np.array([each[3] for each in batch])
             
             loss = mainQN.train_on_batch(states, actions, rewards, next_states, gamma)
+
+    mainQN.save_weights()
         
     return rewards_list
             
