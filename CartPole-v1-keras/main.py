@@ -29,7 +29,7 @@ print('Rewards:', rewards)
 hidden_size = 64               # number of units in each Q-network hidden layer
 learning_rate = 0.0001         # Q-network learning rate
 
-mainQN = QNetwork(name='main', hidden_size=hidden_size, learning_rate=learning_rate)
+mainQN = QNetwork(hidden_size=hidden_size, learning_rate=learning_rate)
 
 # Now train with experiences
 if are_weights_saved():

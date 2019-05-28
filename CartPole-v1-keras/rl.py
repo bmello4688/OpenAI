@@ -1,7 +1,9 @@
 from keras.models import Model, load_model
 from keras.layers import Input, Dense
 from keras.optimizers import Adam
-from keras.losses import mean_squared_error
+from keras.losses import mean_squared_error, mean_absolute_error
+from keras import backend as K
+from keras.utils import to_categorical
 import numpy as np
 import os
 from collections import deque
@@ -16,35 +18,28 @@ def _get_path():
 _weightsFilePath = _get_path()
 
 class QNetwork:
+    
     def __init__(self, learning_rate=0.01, state_size=4, 
-                 action_size=2, hidden_size=10, 
-                 name='QNetwork'):
+                 action_size=2, hidden_size=10):
 
-        def _mean_square_delta_q(y_true, y_pred):
-            pass
-
-        inputs = Input(shape=(state_size, ))
-        actions = Input(shape=(1, ))
-        targetQs = Input(shape=(1, ))
+        state_input = Input(shape=(state_size, ))
+        actions_input = Input(shape=(action_size, ))
+        targetQs_input = Input(shape=(1, ))
 
         # a layer instance is callable on a tensor, and returns a tensor
-        fc1 = Dense(hidden_size, activation='relu')(inputs)
+        fc1 = Dense(hidden_size, activation='relu')(state_input)
         fc2 = Dense(hidden_size, activation='relu')(fc1)
-        ouput = Dense(action_size)(fc2)
+        action_output = Dense(action_size)(fc2)
+        Q = keras.layers.dot(axis=1)([action_output, actions_input])
 
-        self.model = Sequential(
-            [
-                Dense(hidden_size, activation='relu', input_shape=),
-                Dense(hidden_size, activation='relu'),
-                Dense(action_size)
-            ]
-        )
+        self.model = Model(inputs=[state_input, actions_input, targetQs_input], outputs=[action_output, Q])
 
         self. model.compile(optimizer=Adam(lr=learning_rate),
               loss=mean_squared_error,
-              metrics=['accuracy'])
+              metrics=[mean_absolute_error])
 
-        
+        self.gamma = 0.99                   # future reward discount
+
     def get_Qs(self, state):
         # Get action from Q-network
         Qs = self.model.predict(state)
@@ -53,9 +48,17 @@ class QNetwork:
     def get_action(self, state):
         action = np.argmax(self.get_Qs(state.reshape((1, *state.shape))))
         return action
-    
-    def train(self, targets, states, actions):
-        pass
+
+    def train(self, states, actions, rewards, next_states):
+        # Train network
+            #target_Qs = self.get_Qs(next_states)
+                
+            # Set target_Qs to 0 for states where episode ends
+            #episode_ends = (next_states == np.zeros(states[0].shape)).all(axis=1)
+            #target_Qs[episode_ends] = (0, 0)
+                
+            #targets = rewards + self.gamma * np.max(target_Qs, axis=1)
+        return self.model.train_on_batch(states, actions)
 
 
 class Memory():
@@ -100,7 +103,6 @@ def train_and_save(env, mainQN):
 
     train_episodes = 1000          # max number of episodes to learn from
     max_steps = 200                # max steps in an episode
-    gamma = 0.99                   # future reward discount
 
     # Exploration parameters
     explore_start = 1.0            # exploration probability at start
@@ -175,21 +177,8 @@ def train_and_save(env, mainQN):
             actions = np.array([each[1] for each in batch])
             rewards = np.array([each[2] for each in batch])
             next_states = np.array([each[3] for each in batch])
-            
-            # Train network
-            target_Qs = mainQN.get_Qs(next_states)
-            
-            # Set target_Qs to 0 for states where episode ends
-            episode_ends = (next_states == np.zeros(states[0].shape)).all(axis=1)
-            target_Qs[episode_ends] = (0, 0)
-            
-            targets = rewards + gamma * np.max(target_Qs, axis=1)
 
-            mainQN.train()
-            loss, _ = sess.run([mainQN.loss, mainQN.opt],
-                                feed_dict={mainQN.inputs_: states,
-                                           mainQN.targetQs_: targets,
-                                           mainQN.actions_: actions})
+            mainQN.train(states, actions, rewards, next_states)
         
     self.model.save(_weightsFilePath)
     print("Model saved")
