@@ -75,15 +75,23 @@ class QNetwork:
         action = np.argmax(Qs)
         return action
 
-    def train_on_batch(self, states, actions, rewards, next_states, gamma=0.99):
+    def train_on_experience(self, experiences, gamma=0.99):
+
+        states = np.array([each[0] for each in experiences])
+        actions = np.array([each[1] for each in experiences])
+        rewards = np.array([each[2] for each in experiences])
+        next_states = np.array([each[3] for each in experiences])
+
         # Train network
         target_Qs = self.get_Qs(next_states)
             
         # Set target_Qs to 0 for states where episode ends
         episode_ends = (next_states == np.zeros(states[0].shape)).all(axis=1)
         target_Qs[episode_ends] = (0, 0)
-            
-        targets = rewards + gamma * np.max(target_Qs, axis=1)
+        
+        #Double DQN
+        np.max()
+        targets = rewards + gamma * np.apply_along_axis(lambda a: a[np.argmax(a)], 1, target_Qs)
 
         loss, _ = self.session.run([self.loss, self.opt],
                                 feed_dict={self.inputs_: states,
@@ -213,13 +221,9 @@ def train_and_save(env, mainQN):
                 t += 1
             
             # Sample mini-batch from memory
-            batch = memory.sample(batch_size)
-            states = np.array([each[0] for each in batch])
-            actions = np.array([each[1] for each in batch])
-            rewards = np.array([each[2] for each in batch])
-            next_states = np.array([each[3] for each in batch])
+            experiences = memory.sample(batch_size)
             
-            loss = mainQN.train_on_batch(states, actions, rewards, next_states, gamma)
+            loss = mainQN.train_on_experience(experiences, gamma)
 
     mainQN.save_weights()
         
