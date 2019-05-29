@@ -149,6 +149,11 @@ def train_and_save(env, mainQN):
     memory_size = 10000            # memory capacity
     batch_size = 20                # experience mini-batch size
 
+    #You are welcome (and encouraged!) to take the time to extend this code to implement 
+    # some of the improvements that we discussed in the lesson, to include fixed  𝑄  targets, 
+    # double DQNs, prioritized replay, and/or dueling networks.
+    # Atari games paper : http://www.davidqiu.com:8888/research/nature14236.pdf.
+
     memory = Memory(max_size=memory_size)
 
     _pretrain_memory(env, memory, batch_size)
