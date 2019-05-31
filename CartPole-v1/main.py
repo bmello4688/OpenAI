@@ -1,7 +1,7 @@
 import gym
 import numpy as np
 import matplotlib.pyplot as plt
-from rl import QNetwork, train_and_save
+from rl import DDQNetworkGraph, train_and_save
 
 # Create the Cart-Pole game environment
 env = gym.make('CartPole-v1')
@@ -26,16 +26,18 @@ print('Actions:', actions)
 print('Rewards:', rewards)
 
 # Network parameters
+state_size = 4
+action_size = 2
 hidden_size = 64               # number of units in each Q-network hidden layer
 learning_rate = 0.0001         # Q-network learning rate
 
-mainQN = QNetwork('cartpole', __file__, hidden_size=hidden_size, learning_rate=learning_rate)
+network = DDQNetworkGraph('cartpole', __file__, state_size, action_size, learning_rate, hidden_size)
 
 # Now train with experiences
-if mainQN.are_weights_saved():
-    mainQN.load_weights()
+if network.are_weights_saved():
+    network.load_weights()
 else:
-    rewards_list = train_and_save(env, mainQN)
+    rewards_list = train_and_save(env, network)
 
 
     def running_mean(x, N):
@@ -54,11 +56,11 @@ state = env.reset()
 rewards_list = 0
 while True:
     env.render()
-    action = mainQN.get_action(state)
+    action = network.get_action(state)
     state, reward, done, _ = env.step(action)
     rewards_list += reward
     if done:
         print("Episode finished after {0} steps".format(rewards_list))
         break
 
-mainQN.close()
+network.close()
