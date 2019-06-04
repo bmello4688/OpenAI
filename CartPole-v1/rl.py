@@ -194,7 +194,7 @@ class DoubleDQNetworkGraph(NetworkGraph):
     def train_on_experience(self, experiences, gamma):
         states, actions, rewards, next_states = zip(*experiences)
 
-        td_target = np.array([self.targetDQN.get_Qsa(reward, gamma, next_state) for (state, next_state, reward) in zip(states, next_states, rewards)])
+        td_target = self.targetDQN.get_Qsa(rewards, gamma, next_states)
 
         loss = self.lostFunction.run(states, actions, td_target)
 
@@ -251,14 +251,17 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
     def get_weights(self):
         return self._networkGraph.get_weights(self._name)
 
-    def get_Qs(self, state):
+    def get_Qs(self, states):
         """ Get action from Q-network """
-        feed = {self.inputs: state}
+        states = np.asarray(states)
+        if states.ndim < 2:
+            states = states.reshape((1, *states.shape))
+        feed = {self.inputs: states}
         Qs = self._networkGraph.apply_operation(self.output, feed_dict=feed)
         return Qs
 
     def get_action(self, state):
-        Qs = self.get_Qs(state.reshape((1, *state.shape)))
+        Qs = self.get_Qs(state)
         action = np.argmax(Qs)
         return action
 
@@ -266,17 +269,20 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
         target = reward + gamma * self.get_Vs(next_state)
         return target
 
-    def get_Vs(self, state):
+    def get_Vs(self, states):
         """ Get value function from Q-network """
+        states = np.asarray(states)
+        if states.ndim < 2:
+            states = states.reshape((1, *states.shape))
+
         # get Q(s)
-        Qs = self.get_Qs(state.reshape((1, *state.shape)))
+        Qs = self.get_Qs(states)
 
         # Set target_Qs to 0 for states where episode ends
-        episode_end = state == np.zeros(state.shape)
-        if episode_end.all():
-            Qs = tuple(np.zeros((self._output_size, )))
+        episode_ends = (states == np.zeros(states[0].shape)).all(axis=1)
+        Qs[episode_ends] = np.zeros((self._output_size, ))
 
-        value = np.max(Qs)
+        value = np.apply_along_axis(lambda a: a[np.argmax(a)], 1, Qs)
         return value
 
 class Memory():
