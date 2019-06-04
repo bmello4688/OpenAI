@@ -1,7 +1,7 @@
 import gym
 import numpy as np
 import matplotlib.pyplot as plt
-from rl import DDQNetworkGraph, train_and_save
+from rl import DoubleDQNetworkGraph, train_and_save
 
 # Create the Cart-Pole game environment
 env = gym.make('CartPole-v1')
@@ -31,7 +31,7 @@ action_size = 2
 hidden_size = 64               # number of units in each Q-network hidden layer
 learning_rate = 0.0001         # Q-network learning rate
 
-network = DDQNetworkGraph('cartpole', __file__, state_size, action_size, learning_rate, hidden_size)
+network = DoubleDQNetworkGraph('cartpole', __file__, state_size, action_size, learning_rate, hidden_size)
 
 # Now train with experiences
 if network.are_weights_saved():

@@ -18,11 +18,8 @@ class NetworkSubgraph(ABC):
         self._networkGraph.get_weights(self.name)
 
 class LossFunction(ABC):
-    def __init__(self, networkGraph, inputs, output, weight_list):
+    def __init__(self, networkGraph):
         self._networkGraph = networkGraph
-        self._output = output
-        self._inputs = inputs
-        self._weight_list = weight_list
         with self._networkGraph.get_context():
             self.define()
         self._networkGraph.losses.append(self)
@@ -59,11 +56,13 @@ class RLLossFunction(LossFunction):
                                            self.targetQs_: td_target,
                                            self.actions_: actions})
 
-class DDQNLossFunction(RLLossFunction):
+class DoubleDQNLossFunction(LossFunction):
     def __init__(self, networkGraph, mainDQN, targetDQN, action_size, learning_rate):
         self._mainDQN = mainDQN
         self._targetDQN = targetDQN
-        super().__init__(networkGraph, mainDQN.inputs, mainDQN.output, mainDQN.get_weights(), action_size, learning_rate)
+        self._action_size = action_size
+        self._learning_rate = learning_rate
+        super().__init__(networkGraph)
     def define(self):
         with tf.variable_scope('loss'):    
             # One hot encode the actions to later choose the Q-value for the action
@@ -76,16 +75,52 @@ class DDQNLossFunction(RLLossFunction):
             ### Train with loss (targetQ - Q)^2
             # output has length 2, for two actions. This next line chooses
             # one value from output (per row) according to the one-hot encoded actions.
-            Q = tf.reduce_sum(tf.multiply(self._output, one_hot_actions), axis=1)
-                
-            self.loss = tf.reduce_mean(tf.square(self.targetQs_ - Q))
+            Q = tf.reduce_sum(tf.multiply(self._mainDQN.output, one_hot_actions), axis=1)
+            
+            td_error = tf.square(self.targetQs_ - Q)
+            self.loss = tf.reduce_mean(td_error)
             self.opt = tf.train.AdamOptimizer(self._learning_rate).minimize(self.loss, var_list=self._mainDQN.get_weights())
             self.copy_to_target = [t.assign(m) for t, m in zip(self._targetDQN.get_weights(), self._mainDQN.get_weights())]
 
 
     def run(self, states, actions, td_target):
         loss, _, _ = self._networkGraph.apply_operation([self.loss, self.opt, self.copy_to_target],
-                                feed_dict={self._inputs: states,
+                                feed_dict={self._mainDQN.inputs: states,
+                                           self.targetQs_: td_target,
+                                           self.actions_: actions})
+        return loss
+
+class DuelingDQNLossFunction(LossFunction):
+    def __init__(self, networkGraph, valueDQN, advantageDQN, action_size, learning_rate):
+        self._valueDQN = valueDQN
+        self._advantageDQN = advantageDQN
+        self._action_size = action_size
+        self._learning_rate = learning_rate
+        super().__init__(networkGraph)
+    def define(self):
+        with tf.variable_scope('loss'):    
+            # One hot encode the actions to later choose the Q-value for the action
+            self.actions_ = tf.placeholder(tf.int32, [None], name='actions')
+            one_hot_actions = tf.one_hot(self.actions_, self._action_size)
+                
+            # Target Q values for training
+            self.targetQs_ = tf.placeholder(tf.float32, [None], name='target')
+
+            ### Train with loss (targetQ - Q)^2
+            # output has length 2, for two actions. This next line chooses
+            # one value from output (per row) according to the one-hot encoded actions.
+            advantage = tf.reduce_sum(tf.multiply(self._advantageDQN.output, one_hot_actions), axis=1)
+            Q = self._valueDQN.output + advantage - tf.reduce_mean(advantage)
+
+            td_error = tf.square(self.targetQs_ - Q)
+            self.loss = tf.reduce_mean(td_error)
+            self.opt = tf.train.AdamOptimizer(self._learning_rate).minimize(self.loss)
+
+
+    def run(self, states, actions, td_target):
+        loss, _ = self._networkGraph.apply_operation([self.loss, self.opt],
+                                feed_dict={self._valueDQN.inputs: states,
+                                           self._advantageDQN.inputs: states,
                                            self.targetQs_: td_target,
                                            self.actions_: actions})
         return loss
@@ -142,7 +177,7 @@ class NetworkGraph(ABC):
         self._write_graph()
         self.session.close()
 
-class DDQNetworkGraph(NetworkGraph):
+class DoubleDQNetworkGraph(NetworkGraph):
     def __init__(self, name, weight_path, state_size, action_size, learning_rate, hidden_size):
         self._state_size = state_size
         self._action_size = action_size
@@ -152,32 +187,57 @@ class DDQNetworkGraph(NetworkGraph):
     def define(self):
         self.mainDQN = DeepQNetworkSubgraph('DeepQNetwork', self, self._state_size, self._action_size, self._hidden_size)
         self.targetDQN = DeepQNetworkSubgraph('FixedTargetQNetwork', self, self._state_size, self._action_size, self._hidden_size)
-        self.lostFunction = DDQNLossFunction(self, self.mainDQN, self.targetDQN, self._action_size, self._learning_rate)
+        self.lostFunction = DoubleDQNLossFunction(self, self.mainDQN, self.targetDQN, self._action_size, self._learning_rate)
     def get_action(self, state):
         return self.mainDQN.get_action(state)
+
     def train_on_experience(self, experiences, gamma):
-        #targetQN.update_network_weights(mainQN, gamma)
+        states, actions, rewards, next_states = zip(*experiences)
 
-        td_target = self.targetDQN.get_td_target(experiences, gamma)
+        td_target = np.array([self.targetDQN.get_Qsa(reward, gamma, next_state) for (state, next_state, reward) in zip(states, next_states, rewards)])
 
+        loss = self.lostFunction.run(states, actions, td_target)
+
+        return loss
+
+class DuelingDQNetworkGraph(NetworkGraph):
+    def __init__(self, name, weight_path, state_size, action_size, learning_rate, hidden_size):
+        self._state_size = state_size
+        self._action_size = action_size
+        self._learning_rate = learning_rate
+        self._hidden_size = hidden_size
+        super().__init__(name, weight_path)
+    def define(self):
+        self.valueDQN = DeepQNetworkSubgraph('Value', self, self._state_size, 1, self._hidden_size)
+        self.advantageDQN = DeepQNetworkSubgraph('Advantage', self, self._state_size, self._action_size, self._hidden_size)
+        self.lostFunction = DuelingDQNLossFunction(self, self.valueDQN, self.advantageDQN, self._action_size, self._learning_rate)
+    def get_action(self, state):
+        return self.advantageDQN.get_action(state)
+    def train_on_experience(self, experiences, gamma):
         states = np.array([each[0] for each in experiences])
         actions = np.array([each[1] for each in experiences])
+        rewards = np.array([each[2] for each in experiences])
+        next_states = np.array([each[3] for each in experiences])
+
+        td_value = np.array([self.valueDQN.get_Vs(state) for state in states])
+        td_advantage = np.array([self.advantageDQN.get_Qsa(reward, gamma, next_state) - self.advantageDQN.get_Vs(state) for (state, next_state, reward) in zip(states, next_states, rewards)])
+        td_target = td_value + td_advantage - np.mean(td_advantage)
 
         loss = self.lostFunction.run(states, actions, td_target)
 
         return loss
 
 class DeepQNetworkSubgraph(NetworkSubgraph):
-    def __init__(self, name, networkGraph, state_size, 
-                 action_size, hidden_size):
-        self._state_size = state_size
-        self._action_size = action_size
+    def __init__(self, name, networkGraph, input_size, 
+                 output_size, hidden_size):
+        self._input_size = input_size #state_size
+        self._output_size = output_size #action_size
         self._hidden_size = hidden_size
         super().__init__(name, networkGraph)
     def define(self):
         # state inputs to the Q-network
         with tf.variable_scope(self._name):
-            self.inputs = tf.placeholder(tf.float32, [None, self._state_size], name='inputs')
+            self.inputs = tf.placeholder(tf.float32, [None, self._input_size], name='inputs')
             
             # ReLU hidden layers
             self.fc1 = tf.contrib.layers.fully_connected(self.inputs, self._hidden_size)
@@ -185,14 +245,14 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
             self.fc3 = tf.contrib.layers.fully_connected(self.fc2, self._hidden_size)
 
             # Linear output layer
-            self.output = tf.contrib.layers.fully_connected(self.fc3, self._action_size, 
+            self.output = tf.contrib.layers.fully_connected(self.fc3, self._output_size, 
                                                             activation_fn=None)
 
     def get_weights(self):
         return self._networkGraph.get_weights(self._name)
 
     def get_Qs(self, state):
-        # Get action from Q-network
+        """ Get action from Q-network """
         feed = {self.inputs: state}
         Qs = self._networkGraph.apply_operation(self.output, feed_dict=feed)
         return Qs
@@ -202,36 +262,22 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
         action = np.argmax(Qs)
         return action
 
-    def get_td_target(self, experiences, gamma=0.99):
-        states = np.array([each[0] for each in experiences])
-        rewards = np.array([each[2] for each in experiences])
-        next_states = np.array([each[3] for each in experiences])
+    def get_Qsa(self, reward, gamma, next_state):
+        target = reward + gamma * self.get_Vs(next_state)
+        return target
 
-        # get Q(s')
-        target_Qs = self.get_Qs(next_states)
-            
+    def get_Vs(self, state):
+        """ Get value function from Q-network """
+        # get Q(s)
+        Qs = self.get_Qs(state.reshape((1, *state.shape)))
+
         # Set target_Qs to 0 for states where episode ends
-        episode_ends = (next_states == np.zeros(states[0].shape)).all(axis=1)
-        target_Qs[episode_ends] = (0, 0)
-        
-        targets = rewards + gamma * np.apply_along_axis(lambda a: a[np.argmax(a)], 1, target_Qs)
+        episode_end = state == np.zeros(state.shape)
+        if episode_end.all():
+            Qs = tuple(np.zeros((self._output_size, )))
 
-        return targets
-
-class FixedTargetNetwork(DeepQNetworkSubgraph):
-    def __init__(self, network, learning_rate=0.01, state_size=4, 
-                 action_size=2, hidden_size=10):
-        super().__init__(network, learning_rate, state_size, 
-                 action_size, hidden_size, 'FixedQTargetNetwork')
-
-    def update_network_weights(self, dqn :DeepQNetworkSubgraph):
-        dqn_weights = dqn.get_weights()
-        target_weights = self.get_weights()
-
-        update_weights = [old.assign(new) for (new, old) in 
-            zip(dqn_weights, target_weights)]
-
-        self._networkGraph.apply_operation(update_weights)
+        value = np.max(Qs)
+        return value
 
 class Memory():
     def __init__(self, max_size=1000):
