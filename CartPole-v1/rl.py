@@ -2,59 +2,7 @@ import tensorflow as tf
 import numpy as np
 import os
 from collections import deque
-from abc import ABC, abstractmethod
-
-class NetworkSubgraph(ABC):
-    def __init__(self, name, networkGraph):
-        self._name = name
-        self._networkGraph = networkGraph
-        with self._networkGraph.get_context():
-            self.define()
-        self._networkGraph.subgraphs.append(self)
-    @abstractmethod
-    def define(self):
-        pass
-    def get_weights(self):
-        self._networkGraph.get_weights(self.name)
-
-class LossFunction(ABC):
-    def __init__(self, networkGraph):
-        self._networkGraph = networkGraph
-        with self._networkGraph.get_context():
-            self.define()
-        self._networkGraph.losses.append(self)
-    @abstractmethod
-    def define(self):
-        pass
-    @abstractmethod
-    def run(self):
-        pass
-class RLLossFunction(LossFunction):
-    def __init__(self, networkGraph, inputs, output, weight_list, action_size, learning_rate):
-        self._action_size = action_size
-        self._learning_rate = learning_rate
-        super().__init__(networkGraph, inputs, output, weight_list)
-    def define(self):
-        with tf.variable_scope('loss'):    
-            # One hot encode the actions to later choose the Q-value for the action
-            self.actions_ = tf.placeholder(tf.int32, [None], name='actions')
-            one_hot_actions = tf.one_hot(self.actions_, self._action_size)
-                
-            # Target Q values for training
-            self.targetQs_ = tf.placeholder(tf.float32, [None], name='target')
-
-            ### Train with loss (targetQ - Q)^2
-            # output has length 2, for two actions. This next line chooses
-            # one value from output (per row) according to the one-hot encoded actions.
-            Q = tf.reduce_sum(tf.multiply(self._output, one_hot_actions), axis=1)
-                
-            self.loss = tf.reduce_mean(tf.square(self.targetQs_ - Q))
-            self.opt = tf.train.AdamOptimizer(self._learning_rate).minimize(self.loss)
-    def run(self, states, actions, td_target):
-        loss, _ = self.apply_operation([self.loss, self.opt],
-                                feed_dict={self._inputs: states,
-                                           self.targetQs_: td_target,
-                                           self.actions_: actions})
+from base import LossFunction, Memory, NetworkGraph, NetworkSubgraph
 
 class DoubleDQNLossFunction(LossFunction):
     def __init__(self, networkGraph, mainDQN, targetDQN, action_size, learning_rate):
@@ -91,9 +39,9 @@ class DoubleDQNLossFunction(LossFunction):
         return loss
 
 class DuelingDQNLossFunction(LossFunction):
-    def __init__(self, networkGraph, valueDQN, advantageDQN, action_size, learning_rate):
-        self._valueDQN = valueDQN
-        self._advantageDQN = advantageDQN
+    def __init__(self, networkGraph, inputs, aggregationLayer, action_size, learning_rate):
+        self._aggregationLayer = aggregationLayer
+        self._inputs = inputs
         self._action_size = action_size
         self._learning_rate = learning_rate
         super().__init__(networkGraph)
@@ -109,8 +57,7 @@ class DuelingDQNLossFunction(LossFunction):
             ### Train with loss (targetQ - Q)^2
             # output has length 2, for two actions. This next line chooses
             # one value from output (per row) according to the one-hot encoded actions.
-            advantage = tf.reduce_sum(tf.multiply(self._advantageDQN.output, one_hot_actions), axis=1)
-            Q = self._valueDQN.output + advantage - tf.reduce_mean(advantage)
+            Q = tf.reduce_sum(tf.multiply(self._aggregationLayer, one_hot_actions), axis=1)
 
             td_error = tf.square(self.targetQs_ - Q)
             self.loss = tf.reduce_mean(td_error)
@@ -118,64 +65,14 @@ class DuelingDQNLossFunction(LossFunction):
 
 
     def run(self, states, actions, td_target):
+        feed_dict=dict()
+        for k in self._inputs:
+            feed_dict[k] = states
+        feed_dict[self.targetQs_] = td_target
+        feed_dict[self.actions_] = actions
         loss, _ = self._networkGraph.apply_operation([self.loss, self.opt],
-                                feed_dict={self._valueDQN.inputs: states,
-                                           self._advantageDQN.inputs: states,
-                                           self.targetQs_: td_target,
-                                           self.actions_: actions})
+                                feed_dict=feed_dict)
         return loss
-
-class NetworkGraph(ABC):
-    def _get_caller_path(self, path):
-        if os.path.isfile(path):
-            path = os.path.dirname(os.path.realpath(path)) + '\\'
-        return path
-    def __init__(self, name, weight_path):
-        self.name = name
-        self.weight_path = weight_path
-        self._caller_path = self._get_caller_path(weight_path)
-        self._weightsFilePath = '{}checkpoints/{}.ckpt'.format(self._caller_path, name)
-        self.subgraphs = []
-        self.losses = []
-        self._graph = tf.Graph()
-        self.define()
-        self._finalize_graph_creation()
-    @abstractmethod
-    def define(self):
-        pass
-    def get_context(self):
-        return self._graph.as_default()
-    def _write_graph(self):
-        #save graph for tensorboard
-        writer = tf.summary.FileWriter(self._caller_path + 'tensorboard')
-        writer.add_graph(self._graph)
-        writer.flush()
-        writer.close()
-    
-    def get_weights(self, scope=None):
-        return self._graph.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
-
-    def save_weights(self):
-        self.saver.save(self.session, self._weightsFilePath)
-        print("Model saved")
-
-    def load_weights(self):
-        self.saver.restore(self.session, self._weightsFilePath)
-        print("Model restored")
-
-    def are_weights_saved(self):
-        return os.path.exists(self._weightsFilePath+ '.meta')
-
-    def _finalize_graph_creation(self):
-        with self.get_context():
-            self.session = tf.Session()
-            self.session.run(tf.global_variables_initializer())
-            self.saver = tf.train.Saver()
-        self.apply_operation = self.session.run
-
-    def close(self):
-        self._write_graph()
-        self.session.close()
 
 class DoubleDQNetworkGraph(NetworkGraph):
     def __init__(self, name, weight_path, state_size, action_size, learning_rate, hidden_size):
@@ -194,7 +91,7 @@ class DoubleDQNetworkGraph(NetworkGraph):
     def train_on_experience(self, experiences, gamma):
         states, actions, rewards, next_states = zip(*experiences)
 
-        td_target = self.targetDQN.get_Qsa(rewards, gamma, next_states)
+        td_target = self.targetDQN.get_Q_function(rewards, gamma, next_states)
 
         loss = self.lostFunction.run(states, actions, td_target)
 
@@ -210,18 +107,32 @@ class DuelingDQNetworkGraph(NetworkGraph):
     def define(self):
         self.valueDQN = DeepQNetworkSubgraph('Value', self, self._state_size, 1, self._hidden_size)
         self.advantageDQN = DeepQNetworkSubgraph('Advantage', self, self._state_size, self._action_size, self._hidden_size)
-        self.lostFunction = DuelingDQNLossFunction(self, self.valueDQN, self.advantageDQN, self._action_size, self._learning_rate)
-    def get_action(self, state):
-        return self.advantageDQN.get_action(state)
-    def train_on_experience(self, experiences, gamma):
-        states = np.array([each[0] for each in experiences])
-        actions = np.array([each[1] for each in experiences])
-        rewards = np.array([each[2] for each in experiences])
-        next_states = np.array([each[3] for each in experiences])
+        self.inputs = {self.valueDQN.inputs: [], self.advantageDQN.inputs: []}
+        self.aggregationLayer = self.valueDQN.output + (self.advantageDQN.output - tf.reduce_mean(self.advantageDQN.output, axis=1, keepdims=True))
+        self.lostFunction = DuelingDQNLossFunction(self, self.inputs, self.aggregationLayer, self._action_size, self._learning_rate)
+    def get_action_values(self, states):
+        """ Get actions from Q-network """
+        states = np.asarray(states)
+        if states.ndim < 2:
+            states = states.reshape((1, *states.shape))
+        feed = {}
+        for k in self.inputs:
+            feed[k] = states
+        Qs = self.apply_operation(self.aggregationLayer, feed_dict=feed)
+        return Qs
 
-        td_value = np.array([self.valueDQN.get_Vs(state) for state in states])
-        td_advantage = np.array([self.advantageDQN.get_Qsa(reward, gamma, next_state) - self.advantageDQN.get_Vs(state) for (state, next_state, reward) in zip(states, next_states, rewards)])
-        td_target = td_value + td_advantage - np.mean(td_advantage)
+    def get_action(self, state):
+        Qs = self.get_action_values(state)
+        action = np.argmax(Qs)
+        return action
+    def train_on_experience(self, experiences, gamma):
+        states, actions, rewards, next_states = zip(*experiences)
+
+        i = 0
+        actions = np.asarray(actions)
+        td_value = self.valueDQN.get_Value_function(states)
+        td_advantage = self.advantageDQN.get_action_advantage(rewards, gamma, next_states, states)
+        td_target = td_value + (td_advantage - np.mean(td_advantage))
 
         loss = self.lostFunction.run(states, actions, td_target)
 
@@ -251,52 +162,39 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
     def get_weights(self):
         return self._networkGraph.get_weights(self._name)
 
-    def get_Qs(self, states):
-        """ Get action from Q-network """
+    def get_Q_values(self, states):
+        """ Get actions from Q-network """
         states = np.asarray(states)
         if states.ndim < 2:
             states = states.reshape((1, *states.shape))
         feed = {self.inputs: states}
         Qs = self._networkGraph.apply_operation(self.output, feed_dict=feed)
-        return Qs
-
-    def get_action(self, state):
-        Qs = self.get_Qs(state)
-        action = np.argmax(Qs)
-        return action
-
-    def get_Qsa(self, reward, gamma, next_state):
-        target = reward + gamma * self.get_Vs(next_state)
-        return target
-
-    def get_Vs(self, states):
-        """ Get value function from Q-network """
-        states = np.asarray(states)
-        if states.ndim < 2:
-            states = states.reshape((1, *states.shape))
-
-        # get Q(s)
-        Qs = self.get_Qs(states)
 
         # Set target_Qs to 0 for states where episode ends
         episode_ends = (states == np.zeros(states[0].shape)).all(axis=1)
         Qs[episode_ends] = np.zeros((self._output_size, ))
 
-        value = np.apply_along_axis(lambda a: a[np.argmax(a)], 1, Qs)
-        return value
+        return Qs
 
-class Memory():
-    def __init__(self, max_size=1000):
-        self.buffer = deque(maxlen=max_size)
-    
-    def add(self, experience):
-        self.buffer.append(experience)
-            
-    def sample(self, batch_size):
-        idx = np.random.choice(np.arange(len(self.buffer)), 
-                               size=batch_size, 
-                               replace=False)
-        return [self.buffer[ii] for ii in idx]
+    def get_action(self, state):
+        Qs = self.get_Q_values(state)
+        action = np.argmax(Qs)
+        return action
+
+    def get_action_advantage(self, rewards, gamma, next_states, states):
+        advantage = self.get_Q_function(rewards, gamma, next_states) - self.get_Value_function(states)
+        return advantage
+
+    def get_Q_function(self, reward, gamma, next_state):
+        target = reward + gamma * self.get_Value_function(next_state)
+        return target
+
+    def get_Value_function(self, states):
+        """ Get value function from Q-network """
+        Qs = self.get_Q_values(states)
+
+        value = np.max(Qs, axis=1)
+        return value
 
 def _pretrain_memory(env, memory, pretrain_length=20):
 

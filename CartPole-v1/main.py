@@ -1,7 +1,7 @@
 import gym
 import numpy as np
 import matplotlib.pyplot as plt
-from rl import DoubleDQNetworkGraph, train_and_save
+from rl import DuelingDQNetworkGraph, DoubleDQNetworkGraph, train_and_save
 
 # Create the Cart-Pole game environment
 env = gym.make('CartPole-v1')
