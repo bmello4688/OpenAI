@@ -91,7 +91,7 @@ class DoubleDQNetworkGraph(NetworkGraph):
     def train_on_experience(self, experiences, gamma):
         states, actions, rewards, next_states = zip(*experiences)
 
-        td_target = self.targetDQN.get_Q_function(rewards, gamma, next_states)
+        td_target = self.targetDQN.get_Q_value(rewards, gamma, next_states)
 
         loss = self.lostFunction.run(states, actions, td_target)
 
@@ -110,28 +110,14 @@ class DuelingDQNetworkGraph(NetworkGraph):
         self.inputs = {self.valueDQN.inputs: [], self.advantageDQN.inputs: []}
         self.aggregationLayer = self.valueDQN.output + (self.advantageDQN.output - tf.reduce_mean(self.advantageDQN.output, axis=1, keepdims=True))
         self.lostFunction = DuelingDQNLossFunction(self, self.inputs, self.aggregationLayer, self._action_size, self._learning_rate)
-    def get_action_values(self, states):
-        """ Get actions from Q-network """
-        states = np.asarray(states)
-        if states.ndim < 2:
-            states = states.reshape((1, *states.shape))
-        feed = {}
-        for k in self.inputs:
-            feed[k] = states
-        Qs = self.apply_operation(self.aggregationLayer, feed_dict=feed)
-        return Qs
-
     def get_action(self, state):
-        Qs = self.get_action_values(state)
-        action = np.argmax(Qs)
+        action = self.advantageDQN.get_action(state)
         return action
     def train_on_experience(self, experiences, gamma):
         states, actions, rewards, next_states = zip(*experiences)
 
-        i = 0
-        actions = np.asarray(actions)
-        td_value = self.valueDQN.get_Value_function(states)
-        td_advantage = self.advantageDQN.get_action_advantage(rewards, gamma, next_states, states)
+        td_value = self.valueDQN.get_value_function(states)
+        td_advantage = self.advantageDQN.get_advantage_function(rewards, gamma, next_states, states)
         td_target = td_value + (td_advantage - np.mean(td_advantage))
 
         loss = self.lostFunction.run(states, actions, td_target)
@@ -162,6 +148,15 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
     def get_weights(self):
         return self._networkGraph.get_weights(self._name)
 
+    def get_action(self, state):
+        Qs = self.get_Q_values(state)
+        action = np.argmax(Qs)
+        return action
+
+    def get_advantage_function(self, rewards, gamma, next_states, states):
+        advantage = self.get_Q_value(rewards, gamma, next_states) - self.get_value_function(states)
+        return advantage
+
     def get_Q_values(self, states):
         """ Get actions from Q-network """
         states = np.asarray(states)
@@ -176,20 +171,11 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
 
         return Qs
 
-    def get_action(self, state):
-        Qs = self.get_Q_values(state)
-        action = np.argmax(Qs)
-        return action
-
-    def get_action_advantage(self, rewards, gamma, next_states, states):
-        advantage = self.get_Q_function(rewards, gamma, next_states) - self.get_Value_function(states)
-        return advantage
-
-    def get_Q_function(self, reward, gamma, next_state):
-        target = reward + gamma * self.get_Value_function(next_state)
+    def get_Q_value(self, reward, gamma, next_state):
+        target = reward + gamma * self.get_value_function(next_state)
         return target
 
-    def get_Value_function(self, states):
+    def get_value_function(self, states):
         """ Get value function from Q-network """
         Qs = self.get_Q_values(states)
 
