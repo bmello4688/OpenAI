@@ -111,8 +111,9 @@ class QLearningLossFunction(LossFunction):
         # output has length 2, for two actions. This next line chooses
         # one value from output (per row) according to the one-hot encoded actions.
         Q = tf.reduce_sum(tf.multiply(self._output_layer, one_hot_actions), axis=1)
-                
-        self.loss = tf.reduce_mean(tf.square(self._targetQs - Q))
+        
+        td_error = tf.square(self._targetQs - Q)
+        self.loss = tf.reduce_mean(td_error)
         self.opt = tf.train.AdamOptimizer(self._learning_rate).minimize(self.loss, var_list=self.weight_list)
         self.operations_to_run = [self.loss, self.opt]
 
