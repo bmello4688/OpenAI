@@ -140,7 +140,9 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
 
     def get_action(self, state):
         Qs = self.get_Q_values(state)
-        action = np.argmax(Qs)
+        action = np.argmax(Qs, axis=1)
+        if len(action) == 1:
+            action = action[0]
         return action
 
     def get_advantage_function(self, rewards, gamma, next_states, states):
@@ -161,9 +163,20 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
 
         return Qs
 
-    def get_target_Q_value(self, reward, gamma, next_state):
-        target = reward + gamma * self.get_value_function(next_state)
+    def get_target_Q_value(self, reward, gamma, next_state, predicted_next_actions=None):
+        if predicted_next_actions is None:#single learning
+            target = reward + gamma * self.get_value_function(next_state)
+        else:
+            target = reward + gamma * self.get_Q_value(next_state, predicted_next_actions)
         return target
+
+    def get_Q_value(self, states, actions):
+        """ Get value function from Q-network """
+        Qs = self.get_Q_values(states)
+
+        q_value = np.take_along_axis(Qs, actions.reshape(-1,1), axis=1)
+
+        return q_value.flatten()
 
     def get_value_function(self, states):
         """ Get value function from Q-network """

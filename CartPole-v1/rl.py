@@ -5,7 +5,7 @@ import os
 from collections import deque
 from base import QLearningLossFunction, Memory, DeepQNetworkSubgraph, NetworkGraph, QAgent
 
-class DoubleDQNetworkGraph(NetworkGraph):
+class DoubleDQNetworkGraphWithFixedTarget(NetworkGraph):
     def __init__(self, name, weight_path, state_size, action_size, learning_rate, hidden_size):
         self._state_size = state_size
         self._action_size = action_size
@@ -52,7 +52,12 @@ class DoubleDQNetworkGraph(NetworkGraph):
     def train_on_experience(self, experiences, gamma):
         states, actions, rewards, next_states = zip(*experiences)
 
+        #single learning
         td_target = self._targetDQN.get_target_Q_value(rewards, gamma, next_states)
+
+        #double learning
+        #predicted_next_actions = self._mainDQN.get_action(next_states)
+        #td_target = self._targetDQN.get_target_Q_value(rewards, gamma, next_states, predicted_next_actions)
 
         loss, priority = self._loss_function.run(states, actions, td_target)
 
@@ -104,7 +109,7 @@ class DuelingDQNetworkGraph(NetworkGraph):
 
 class QAgentWithReplay(QAgent):
     def __init__(self, weights_path, state_size, action_size, learning_rate, hidden_size, graph_results=False):
-        self._network = DoubleDQNetworkGraph('agent', weights_path, state_size, action_size, learning_rate, hidden_size)
+        self._network = DoubleDQNetworkGraphWithFixedTarget('agent', weights_path, state_size, action_size, learning_rate, hidden_size)
         self.graph_results = graph_results
         return super().__init__(self._network)
     def _pretrain_memory(self, env, memory, pretrain_length=20):
@@ -136,8 +141,8 @@ class QAgentWithReplay(QAgent):
             return (cumsum[N:] - cumsum[:-N]) / N 
 
 
-    def train(self, env):
-        train_episodes = 100          # max number of episodes to learn from
+    def train(self, env, train_episodes = 100):
+        # max number of episodes to learn from
         max_steps = 200                # max steps in an episode
         gamma = 0.99                   # future reward discount
 
