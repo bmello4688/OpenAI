@@ -135,7 +135,7 @@ class QAgentWithReplay(QAgent):
 
 
     def train(self, env):
-        train_episodes = 1000          # max number of episodes to learn from
+        train_episodes = 100          # max number of episodes to learn from
         max_steps = 200                # max steps in an episode
         gamma = 0.99                   # future reward discount
 
@@ -218,7 +218,7 @@ class QAgentWithReplay(QAgent):
 
         self.network.save_weights()
 
-        if graph_results:
+        if self.graph_results:
             eps, rews = np.array(rewards_list).T
             smoothed_rews = self.running_mean(rews, 10)
             plt.plot(eps[-len(smoothed_rews):], smoothed_rews)
