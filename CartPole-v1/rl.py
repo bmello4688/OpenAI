@@ -41,11 +41,13 @@ class DoubleDQNetworkGraph(NetworkGraph):
                                                                     activation_fn=None)
             self._targetDQN = DeepQNetworkSubgraph(target_name, self, target_inputs, target_output)
 
-        copy_to_target = [t.assign(m) for t, m in zip(self._targetDQN.get_weights(), self._mainDQN.get_weights())]
+        self._update_target_network_op = [t.assign(m) for t, m in zip(self._targetDQN.get_weights(), self._mainDQN.get_weights())]
         self._loss_function = QLearningLossFunction(self, self._mainDQN.input_layer, self._mainDQN.output_layer, self._learning_rate, self._mainDQN.get_weights())
-        self._loss_function.add_operations_to_run([copy_to_target])
     def get_action(self, state):
         return self._mainDQN.get_action(state)
+
+    def update_target_network(self):
+        self.apply_operation(self._update_target_network_op)
 
     def train_on_experience(self, experiences, gamma):
         states, actions, rewards, next_states = zip(*experiences)
@@ -102,9 +104,9 @@ class DuelingDQNetworkGraph(NetworkGraph):
 
 class QAgentWithReplay(QAgent):
     def __init__(self, weights_path, state_size, action_size, learning_rate, hidden_size, graph_results=False):
-        self.network = DoubleDQNetworkGraph('agent', weights_path, state_size, action_size, learning_rate, hidden_size)
+        self._network = DoubleDQNetworkGraph('agent', weights_path, state_size, action_size, learning_rate, hidden_size)
         self.graph_results = graph_results
-        return super().__init__(self.network)
+        return super().__init__(self._network)
     def _pretrain_memory(self, env, memory, pretrain_length=20):
         state = env.reset()
         # Make a bunch of random actions and store the experiences
@@ -214,9 +216,11 @@ class QAgentWithReplay(QAgent):
                 # Sample mini-batch from memory
                 experiences = memory.sample(batch_size)
                 
-                loss, priority = self.network.train_on_experience(experiences, gamma)
+                loss, priority = self._network.train_on_experience(experiences, gamma)
 
-        self.network.save_weights()
+            self._network.update_target_network()
+
+        self._network.save_weights()
 
         if self.graph_results:
             eps, rews = np.array(rewards_list).T

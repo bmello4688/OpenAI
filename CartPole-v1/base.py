@@ -118,12 +118,6 @@ class QLearningLossFunction(LossFunction):
         opt = tf.train.AdamOptimizer(self._learning_rate).minimize(loss, var_list=self.weight_list)
         self._operations_to_run = [loss, priority, opt]
 
-    def add_operations_to_run(self, operations):
-        if isinstance(operations, (list, np.ndarray)):
-            self._operations_to_run.extend(operations)
-        else:
-            self._operations_to_run.append(operations)
-
     def run(self, states, actions, td_target):
         return_operations = self._networkGraph.apply_operation(self._operations_to_run,
                                 feed_dict={self._input_layer: states,
