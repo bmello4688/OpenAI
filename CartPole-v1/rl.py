@@ -53,11 +53,11 @@ class DoubleDQNetworkGraphWithFixedTarget(NetworkGraph):
         states, actions, rewards, next_states = zip(*experiences)
 
         #single learning
-        td_target = self._targetDQN.get_target_Q_value(rewards, gamma, next_states)
+        #td_target = self._targetDQN.get_target_Q_value(rewards, gamma, next_states)
 
         #double learning
-        #predicted_next_actions = self._mainDQN.get_action(next_states)
-        #td_target = self._targetDQN.get_target_Q_value(rewards, gamma, next_states, predicted_next_actions)
+        predicted_next_actions = self._mainDQN.get_action(next_states)
+        td_target = self._targetDQN.get_target_Q_value(rewards, gamma, next_states, predicted_next_actions)
 
         loss, priority = self._loss_function.run(states, actions, td_target)
 
