@@ -164,7 +164,7 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
         return Qs
 
     def get_target_Q_value(self, reward, gamma, next_state, predicted_next_actions=None):
-        if predicted_next_actions is None:#single learning
+        if predicted_next_actions is None:#if none chooses max Q-value
             target = reward + gamma * self.get_value_function(next_state)
         else:
             target = reward + gamma * self.get_Q_value(next_state, predicted_next_actions)
