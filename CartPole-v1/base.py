@@ -113,20 +113,25 @@ class QLearningLossFunction(LossFunction):
         Q = tf.reduce_sum(tf.multiply(self._output_layer, one_hot_actions), axis=1)
         
         td_error = tf.square(self._targetQs - Q)
-        self.loss = tf.reduce_mean(td_error)
-        self.opt = tf.train.AdamOptimizer(self._learning_rate).minimize(self.loss, var_list=self.weight_list)
-        self.operations_to_run = [self.loss, self.opt]
+        priority = tf.abs(td_error) + 0.001 #0.001 is used as a constant. Assures zero is not reached
+        loss = tf.reduce_mean(td_error)
+        opt = tf.train.AdamOptimizer(self._learning_rate).minimize(loss, var_list=self.weight_list)
+        self._operations_to_run = [loss, priority, opt]
 
     def add_operations_to_run(self, operations):
-        self.operations_to_run.extend(operations)
+        if isinstance(operations, (list, np.ndarray)):
+            self._operations_to_run.extend(operations)
+        else:
+            self._operations_to_run.append(operations)
 
     def run(self, states, actions, td_target):
-        return_operations = self._networkGraph.apply_operation(self.operations_to_run,
+        return_operations = self._networkGraph.apply_operation(self._operations_to_run,
                                 feed_dict={self._input_layer: states,
                                            self._targetQs: td_target,
                                            self._actions: actions})
         loss = return_operations[0]
-        return loss
+        priority = return_operations[1]
+        return loss, priority
 
 class DeepQNetworkSubgraph(NetworkSubgraph):
     def __init__(self, name, networkGraph, input_layer, output_layer):
@@ -172,3 +177,33 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
 
         value = np.max(Qs, axis=1)
         return value
+
+class Agent(ABC):
+
+    @abstractmethod
+    def train():
+        pass
+    @abstractmethod
+    def predict_action():
+        pass
+
+class QAgent(ABC):
+    def __init__(self, network):
+        self._network = network
+        if self.is_trained():
+            self._network.load_weights()
+    def is_trained(self):
+        return self._network.are_weights_saved()
+    def choose_action(self, state):
+        return self._network.get_action(state)
+    def stop(self):
+        self._network.close()
+    #for using 'with'
+    def __enter__(self):
+        return self
+    def __exit__(self, type, value, tb):
+        self.stop()
+
+    @abstractmethod
+    def train():
+        pass

@@ -1,8 +1,9 @@
 import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
 import os
 from collections import deque
-from base import QLearningLossFunction, Memory, NetworkGraph, NetworkSubgraph, DeepQNetworkSubgraph
+from base import QLearningLossFunction, Memory, DeepQNetworkSubgraph, NetworkGraph, QAgent
 
 class DoubleDQNetworkGraph(NetworkGraph):
     def __init__(self, name, weight_path, state_size, action_size, learning_rate, hidden_size):
@@ -51,9 +52,9 @@ class DoubleDQNetworkGraph(NetworkGraph):
 
         td_target = self._targetDQN.get_target_Q_value(rewards, gamma, next_states)
 
-        loss = self._loss_function.run(states, actions, td_target)
+        loss, priority = self._loss_function.run(states, actions, td_target)
 
-        return loss
+        return loss, priority
 
 class DuelingDQNetworkGraph(NetworkGraph):
     def __init__(self, name, weight_path, state_size, action_size, learning_rate, hidden_size):
@@ -95,119 +96,133 @@ class DuelingDQNetworkGraph(NetworkGraph):
 
         td_target = self.duelDQN.get_target_Q_value(rewards, gamma, next_states)
 
-        loss = self.loss_function.run(states, actions, td_target)
+        loss, priority = self.loss_function.run(states, actions, td_target)
 
-        return loss
+        return loss, priority
 
-def _pretrain_memory(env, memory, pretrain_length=20):
+class QAgentWithReplay(QAgent):
+    def __init__(self, weights_path, state_size, action_size, learning_rate, hidden_size, graph_results=False):
+        self.network = DoubleDQNetworkGraph('agent', weights_path, state_size, action_size, learning_rate, hidden_size)
+        self.graph_results = graph_results
+        return super().__init__(self.network)
+    def _pretrain_memory(self, env, memory, pretrain_length=20):
+        state = env.reset()
+        # Make a bunch of random actions and store the experiences
+        for ii in range(pretrain_length):
 
-    state = env.reset()
-    # Make a bunch of random actions and store the experiences
-    for ii in range(pretrain_length):
-
-        # Make a random action
-        action = env.action_space.sample()
-        next_state, reward, done, _ = env.step(action)
-
-        if done:
-            # The simulation fails so no next state
-            next_state = np.zeros(state.shape)
-            # Add experience to memory
-            memory.add((state, action, reward, next_state))
-            
-            # Start new episode
-            env.reset()
-            # Take one random step to get the pole and cart moving
-            state, reward, done, _ = env.step(env.action_space.sample())
-        else:
-            # Add experience to memory
-            memory.add((state, action, reward, next_state))
-            state = next_state
-
-def train_and_save(env, network):
-
-    train_episodes = 1000          # max number of episodes to learn from
-    max_steps = 200                # max steps in an episode
-    gamma = 0.99                   # future reward discount
-
-    # Exploration parameters
-    explore_start = 1.0            # exploration probability at start
-    explore_stop = 0.01            # minimum exploration probability 
-    decay_rate = 0.0001            # exponential decay rate for exploration prob
-
-    # Memory parameters
-    memory_size = 10000            # memory capacity
-    batch_size = 20                # experience mini-batch size
-
-    #You are welcome (and encouraged!) to take the time to extend this code to implement 
-    # some of the improvements that we discussed in the lesson, to include fixed  𝑄  targets, 
-    # double DQNs, prioritized replay, and/or dueling networks.
-    # Atari games paper : http://www.davidqiu.com:8888/research/nature14236.pdf.
-
-    memory = Memory(max_size=memory_size)
-
-    _pretrain_memory(env, memory, batch_size)
-
-    # Initialize the simulation
-    env.reset()
-    # Take one random step to get the pole and cart moving
-    state, reward, done, _ = env.step(env.action_space.sample())
-
-    rewards_list = []
-    step = 0
-    loss = None
-    for ep in range(1, train_episodes):
-        total_reward = 0
-        t = 0
-        while t < max_steps:
-            step += 1
-            # Uncomment this next line to watch the training
-            # env.render() 
-            
-            # Explore or Exploit
-            explore_p = explore_stop + (explore_start - explore_stop)*np.exp(-decay_rate*step) 
-            if explore_p > np.random.rand():
-                # Make a random action
-                action = env.action_space.sample()
-            else:
-                action = network.get_action(state)
-            
-            # Take action, get new state and reward
+            # Make a random action
+            action = env.action_space.sample()
             next_state, reward, done, _ = env.step(action)
-    
-            total_reward += reward
-            
+
             if done:
-                # the episode ends so no next state
+                # The simulation fails so no next state
                 next_state = np.zeros(state.shape)
-                t = max_steps
-                
-                print('Episode: {}'.format(ep),
-                      'Total reward: {}'.format(total_reward),
-                      'Training loss: {:.4f}'.format(loss),
-                      'Explore P: {:.4f}'.format(explore_p))
-                rewards_list.append((ep, total_reward))
-                
                 # Add experience to memory
                 memory.add((state, action, reward, next_state))
-                
+            
                 # Start new episode
                 env.reset()
                 # Take one random step to get the pole and cart moving
                 state, reward, done, _ = env.step(env.action_space.sample())
-
             else:
                 # Add experience to memory
                 memory.add((state, action, reward, next_state))
                 state = next_state
-                t += 1
-            
-            # Sample mini-batch from memory
-            experiences = memory.sample(batch_size)
-            
-            loss = network.train_on_experience(experiences, gamma)
 
-    network.save_weights()
+    def _running_mean(self, x, N):
+            cumsum = np.cumsum(np.insert(x, 0, 0)) 
+            return (cumsum[N:] - cumsum[:-N]) / N 
+
+
+    def train(self, env):
+        train_episodes = 1000          # max number of episodes to learn from
+        max_steps = 200                # max steps in an episode
+        gamma = 0.99                   # future reward discount
+
+        # Exploration parameters
+        explore_start = 1.0            # exploration probability at start
+        explore_stop = 0.01            # minimum exploration probability 
+        decay_rate = 0.0001            # exponential decay rate for exploration prob
+
+        # Memory parameters
+        memory_size = 10000            # memory capacity
+        batch_size = 20                # experience mini-batch size
+
+        #You are welcome (and encouraged!) to take the time to extend this code to implement 
+        # some of the improvements that we discussed in the lesson, to include fixed  𝑄  targets, 
+        # double DQNs, prioritized replay, and/or dueling networks.
+        # Atari games paper : http://www.davidqiu.com:8888/research/nature14236.pdf.
+
+        memory = Memory(max_size=memory_size)
+
+        self._pretrain_memory(env, memory, batch_size)
+
+        # Initialize the simulation
+        env.reset()
+        # Take one random step to get the pole and cart moving
+        state, reward, done, _ = env.step(env.action_space.sample())
+
+        rewards_list = []
+        step = 0
+        loss = None
+        for ep in range(1, train_episodes):
+            total_reward = 0
+            t = 0
+            while t < max_steps:
+                step += 1
+                # Uncomment this next line to watch the training
+                # env.render() 
+                
+                # Explore or Exploit
+                explore_p = explore_stop + (explore_start - explore_stop)*np.exp(-decay_rate*step) 
+                if explore_p > np.random.rand():
+                    # Make a random action
+                    action = env.action_space.sample()
+                else:
+                    action = self.choose_action(state)
+                
+                # Take action, get new state and reward
+                next_state, reward, done, _ = env.step(action)
         
-    return rewards_list
-            
+                total_reward += reward
+                
+                if done:
+                    # the episode ends so no next state
+                    next_state = np.zeros(state.shape)
+                    t = max_steps
+                    
+                    print('Episode: {}'.format(ep),
+                        'Total reward: {}'.format(total_reward),
+                        'Training loss: {:.4f}'.format(loss),
+                        'Explore P: {:.4f}'.format(explore_p))
+                    rewards_list.append((ep, total_reward))
+                    
+                    # Add experience to memory
+                    memory.add((state, action, reward, next_state))
+                    
+                    # Start new episode
+                    env.reset()
+                    # Take one random step to get the pole and cart moving
+                    state, reward, done, _ = env.step(env.action_space.sample())
+
+                else:
+                    # Add experience to memory
+                    memory.add((state, action, reward, next_state))
+                    state = next_state
+                    t += 1
+                
+                # Sample mini-batch from memory
+                experiences = memory.sample(batch_size)
+                
+                loss, priority = self.network.train_on_experience(experiences, gamma)
+
+        self.network.save_weights()
+
+        if graph_results:
+            eps, rews = np.array(rewards_list).T
+            smoothed_rews = self.running_mean(rews, 10)
+            plt.plot(eps[-len(smoothed_rews):], smoothed_rews)
+            plt.plot(eps, rews, color='grey', alpha=0.3)
+            plt.xlabel('Episode')
+            plt.ylabel('Total Reward')
+            plt.show()
