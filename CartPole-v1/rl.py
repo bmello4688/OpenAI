@@ -108,10 +108,26 @@ class DuelingDQNetworkGraph(NetworkGraph):
         self.valueDQN = DeepQNetworkSubgraph('Value', self, self._state_size, 1, self._hidden_size)
         self.advantageDQN = DeepQNetworkSubgraph('Advantage', self, self._state_size, self._action_size, self._hidden_size)
         self.inputs = {self.valueDQN.inputs: [], self.advantageDQN.inputs: []}
-        self.aggregationLayer = self.valueDQN.output + (self.advantageDQN.output - tf.reduce_mean(self.advantageDQN.output, axis=1, keepdims=True))
-        self.lostFunction = DuelingDQNLossFunction(self, self.inputs, self.aggregationLayer, self._action_size, self._learning_rate)
+        self.aggregation_layer = self.valueDQN.output + (self.advantageDQN.output - tf.reduce_mean(self.advantageDQN.output, axis=1, keepdims=True))
+        self.lostFunction = DuelingDQNLossFunction(self, self.inputs, self.aggregation_layer, self._action_size, self._learning_rate)
+    def get_Q_values(self, states):
+        """ Get actions from Q-network """
+        states = np.asarray(states)
+        if states.ndim < 2:
+            states = states.reshape((1, *states.shape))
+        feed = {}
+        for key in self.inputs:
+            feed[key] = states
+        Qs = self.apply_operation(self.aggregation_layer, feed_dict=feed)
+
+        # Set target_Qs to 0 for states where episode ends
+        episode_ends = (states == np.zeros(states[0].shape)).all(axis=1)
+        Qs[episode_ends] = np.zeros((self._action_size, ))
+
+        return Qs
     def get_action(self, state):
-        action = self.advantageDQN.get_action(state)
+        actions = self.get_Q_values(state)
+        action = np.argmax(actions)
         return action
     def train_on_experience(self, experiences, gamma):
         states, actions, rewards, next_states = zip(*experiences)
