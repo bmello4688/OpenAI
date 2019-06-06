@@ -2,77 +2,7 @@ import tensorflow as tf
 import numpy as np
 import os
 from collections import deque
-from base import LossFunction, Memory, NetworkGraph, NetworkSubgraph
-
-class DoubleDQNLossFunction(LossFunction):
-    def __init__(self, networkGraph, mainDQN, targetDQN, action_size, learning_rate):
-        self._mainDQN = mainDQN
-        self._targetDQN = targetDQN
-        self._action_size = action_size
-        self._learning_rate = learning_rate
-        super().__init__(networkGraph)
-    def define(self):
-        with tf.variable_scope('loss'):    
-            # One hot encode the actions to later choose the Q-value for the action
-            self.actions_ = tf.placeholder(tf.int32, [None], name='actions')
-            one_hot_actions = tf.one_hot(self.actions_, self._action_size)
-                
-            # Target Q values for training
-            self.targetQs_ = tf.placeholder(tf.float32, [None], name='target')
-
-            ### Train with loss (targetQ - Q)^2
-            # output has length 2, for two actions. This next line chooses
-            # one value from output (per row) according to the one-hot encoded actions.
-            Q = tf.reduce_sum(tf.multiply(self._mainDQN.output, one_hot_actions), axis=1)
-            
-            td_error = tf.square(self.targetQs_ - Q)
-            self.loss = tf.reduce_mean(td_error)
-            self.opt = tf.train.AdamOptimizer(self._learning_rate).minimize(self.loss, var_list=self._mainDQN.get_weights())
-            self.copy_to_target = [t.assign(m) for t, m in zip(self._targetDQN.get_weights(), self._mainDQN.get_weights())]
-
-
-    def run(self, states, actions, td_target):
-        loss, _, _ = self._networkGraph.apply_operation([self.loss, self.opt, self.copy_to_target],
-                                feed_dict={self._mainDQN.inputs: states,
-                                           self.targetQs_: td_target,
-                                           self.actions_: actions})
-        return loss
-
-class DuelingDQNLossFunction(LossFunction):
-    def __init__(self, networkGraph, inputs, aggregationLayer, action_size, learning_rate):
-        self._aggregationLayer = aggregationLayer
-        self._inputs = inputs
-        self._action_size = action_size
-        self._learning_rate = learning_rate
-        super().__init__(networkGraph)
-    def define(self):
-        with tf.variable_scope('loss'):    
-            # One hot encode the actions to later choose the Q-value for the action
-            self.actions_ = tf.placeholder(tf.int32, [None], name='actions')
-            one_hot_actions = tf.one_hot(self.actions_, self._action_size)
-                
-            # Target Q values for training
-            self.targetQs_ = tf.placeholder(tf.float32, [None], name='target')
-
-            ### Train with loss (targetQ - Q)^2
-            # output has length 2, for two actions. This next line chooses
-            # one value from output (per row) according to the one-hot encoded actions.
-            Q = tf.reduce_sum(tf.multiply(self._aggregationLayer, one_hot_actions), axis=1)
-
-            td_error = tf.square(self.targetQs_ - Q)
-            self.loss = tf.reduce_mean(td_error)
-            self.opt = tf.train.AdamOptimizer(self._learning_rate).minimize(self.loss)
-
-
-    def run(self, states, actions, td_target):
-        feed_dict={self._inputs: states,
-                   self.targetQs_: td_target,
-                   self.actions_: actions
-                }
-
-        loss, _ = self._networkGraph.apply_operation([self.loss, self.opt],
-                                feed_dict=feed_dict)
-        return loss
+from base import QLearningLossFunction, Memory, NetworkGraph, NetworkSubgraph, DeepQNetworkSubgraph
 
 class DoubleDQNetworkGraph(NetworkGraph):
     def __init__(self, name, weight_path, state_size, action_size, learning_rate, hidden_size):
@@ -81,19 +11,47 @@ class DoubleDQNetworkGraph(NetworkGraph):
         self._learning_rate = learning_rate
         self._hidden_size = hidden_size
         super().__init__(name, weight_path)
-    def define(self):
-        self.mainDQN = DeepQNetworkSubgraph('DeepQNetwork', self, self._state_size, self._action_size, self._hidden_size)
-        self.targetDQN = DeepQNetworkSubgraph('FixedTargetQNetwork', self, self._state_size, self._action_size, self._hidden_size)
-        self.lostFunction = DoubleDQNLossFunction(self, self.mainDQN, self.targetDQN, self._action_size, self._learning_rate)
+    def _define(self):
+        main_name = 'main'
+        with tf.variable_scope(main_name):
+            main_inputs = tf.placeholder(tf.float32, [None, self._state_size])
+                    
+            # ReLU hidden layers
+            mfc1 = tf.contrib.layers.fully_connected(main_inputs, self._hidden_size)
+            mfc2 = tf.contrib.layers.fully_connected(mfc1, self._hidden_size)
+            mfc3 = tf.contrib.layers.fully_connected(mfc2, self._hidden_size)
+
+            # Linear output layer
+            main_output = tf.contrib.layers.fully_connected(mfc3, self._action_size, 
+                                                                    activation_fn=None)
+            self._mainDQN = DeepQNetworkSubgraph(main_name, self, main_inputs, main_output)
+
+        target_name = 'target'
+        with tf.variable_scope(target_name):
+            target_inputs = tf.placeholder(tf.float32, [None, self._state_size])
+                    
+            # ReLU hidden layers
+            tfc1 = tf.contrib.layers.fully_connected(target_inputs, self._hidden_size)
+            tfc2 = tf.contrib.layers.fully_connected(tfc1, self._hidden_size)
+            tfc3 = tf.contrib.layers.fully_connected(tfc2, self._hidden_size)
+
+            # Linear output layer
+            target_output = tf.contrib.layers.fully_connected(tfc3, self._action_size, 
+                                                                    activation_fn=None)
+            self._targetDQN = DeepQNetworkSubgraph(target_name, self, target_inputs, target_output)
+
+        copy_to_target = [t.assign(m) for t, m in zip(self._targetDQN.get_weights(), self._mainDQN.get_weights())]
+        self._loss_function = QLearningLossFunction(self, self._mainDQN.input_layer, self._mainDQN.output_layer, self._learning_rate, self._mainDQN.get_weights())
+        self._loss_function.add_operations_to_run([copy_to_target])
     def get_action(self, state):
-        return self.mainDQN.get_action(state)
+        return self._mainDQN.get_action(state)
 
     def train_on_experience(self, experiences, gamma):
         states, actions, rewards, next_states = zip(*experiences)
 
-        td_target = self.targetDQN.get_target_Q_value(rewards, gamma, next_states)
+        td_target = self._targetDQN.get_target_Q_value(rewards, gamma, next_states)
 
-        loss = self.lostFunction.run(states, actions, td_target)
+        loss = self._loss_function.run(states, actions, td_target)
 
         return loss
 
@@ -104,9 +62,31 @@ class DuelingDQNetworkGraph(NetworkGraph):
         self._learning_rate = learning_rate
         self._hidden_size = hidden_size
         super().__init__(name, weight_path)
-    def define(self):
-        self.duelDQN = DuelDeepQNetworkSubgraph('duel', self, self._state_size, self._action_size, self._hidden_size)
-        self.lostFunction = DuelingDQNLossFunction(self, self.duelDQN.inputs, self.duelDQN.aggregation_layer, self._action_size, self._learning_rate)
+    def _define(self):
+        self.inputs = tf.placeholder(tf.float32, [None, self._state_size], name='inputs')
+                
+        # ReLU hidden layers
+        self.afc1 = tf.contrib.layers.fully_connected(self.inputs, self._hidden_size)
+        self.afc2 = tf.contrib.layers.fully_connected(self.afc1, self._hidden_size)
+        self.afc3 = tf.contrib.layers.fully_connected(self.afc2, self._hidden_size)
+
+        # Linear output layer
+        self.value_output = tf.contrib.layers.fully_connected(self.afc3, 1, 
+                                                                activation_fn=None)
+
+        # ReLU hidden layers
+        self.vfc1 = tf.contrib.layers.fully_connected(self.inputs, self._hidden_size)
+        self.vfc2 = tf.contrib.layers.fully_connected(self.vfc1, self._hidden_size)
+        self.vfc3 = tf.contrib.layers.fully_connected(self.vfc2, self._hidden_size)
+
+        # Linear output layer
+        self.advantage_output = tf.contrib.layers.fully_connected(self.vfc3, self._action_size, 
+                                                                activation_fn=None)
+        # aggregate output layer
+        self.aggregation_layer = self.value_output + (self.advantage_output - tf.reduce_mean(self.advantage_output, axis=1, keepdims=True))           
+
+        self.duelDQN = DeepQNetworkSubgraph('duel', self, self.inputs, self.aggregation_layer)
+        self.loss_function = QLearningLossFunction(self, self.inputs, self.aggregation_layer, self._learning_rate)
     def get_action(self, state):
         action = self.duelDQN.get_action(state)
         return action
@@ -115,137 +95,9 @@ class DuelingDQNetworkGraph(NetworkGraph):
 
         td_target = self.duelDQN.get_target_Q_value(rewards, gamma, next_states)
 
-        loss = self.lostFunction.run(states, actions, td_target)
+        loss = self.loss_function.run(states, actions, td_target)
 
         return loss
-
-class DeepQNetworkSubgraph(NetworkSubgraph):
-    def __init__(self, name, networkGraph, input_size, 
-                 output_size, hidden_size):
-        self._input_size = input_size #state_size
-        self._output_size = output_size #action_size
-        self._hidden_size = hidden_size
-        super().__init__(name, networkGraph)
-    def define(self):
-        # state inputs to the Q-network
-        with tf.variable_scope(self._name):
-            self.inputs = tf.placeholder(tf.float32, [None, self._input_size], name='inputs')
-            
-            # ReLU hidden layers
-            self.fc1 = tf.contrib.layers.fully_connected(self.inputs, self._hidden_size)
-            self.fc2 = tf.contrib.layers.fully_connected(self.fc1, self._hidden_size)
-            self.fc3 = tf.contrib.layers.fully_connected(self.fc2, self._hidden_size)
-
-            # Linear output layer
-            self.output = tf.contrib.layers.fully_connected(self.fc3, self._output_size, 
-                                                            activation_fn=None)
-
-    def get_weights(self):
-        return self._networkGraph.get_weights(self._name)
-
-    def get_action(self, state):
-        Qs = self.get_Q_values(state)
-        action = np.argmax(Qs)
-        return action
-
-    def get_advantage_function(self, rewards, gamma, next_states, states):
-        advantage = self.get_target_Q_value(rewards, gamma, next_states) - self.get_value_function(states)
-        return advantage
-
-    def get_Q_values(self, states):
-        """ Get actions from Q-network """
-        states = np.asarray(states)
-        if states.ndim < 2:
-            states = states.reshape((1, *states.shape))
-        feed = {self.inputs: states}
-        Qs = self._networkGraph.apply_operation(self.output, feed_dict=feed)
-
-        # Set target_Qs to 0 for states where episode ends
-        episode_ends = (states == np.zeros(states[0].shape)).all(axis=1)
-        Qs[episode_ends] = np.zeros((self._output_size, ))
-
-        return Qs
-
-    def get_target_Q_value(self, reward, gamma, next_state):
-        target = reward + gamma * self.get_value_function(next_state)
-        return target
-
-    def get_value_function(self, states):
-        """ Get value function from Q-network """
-        Qs = self.get_Q_values(states)
-
-        value = np.max(Qs, axis=1)
-        return value
-
-class DuelDeepQNetworkSubgraph(NetworkSubgraph):
-    def __init__(self, name, networkGraph, input_size, 
-                 output_size, hidden_size):
-        self._input_size = input_size #state_size
-        self._output_size = output_size #action_size
-        self._hidden_size = hidden_size
-        super().__init__(name, networkGraph)
-    def define(self):
-        # state inputs to the Q-network
-        with tf.variable_scope(self._name):
-            self.inputs = tf.placeholder(tf.float32, [None, self._input_size], name='inputs')
-            
-            # ReLU hidden layers
-            self.afc1 = tf.contrib.layers.fully_connected(self.inputs, self._hidden_size)
-            self.afc2 = tf.contrib.layers.fully_connected(self.afc1, self._hidden_size)
-            self.afc3 = tf.contrib.layers.fully_connected(self.afc2, self._hidden_size)
-
-            # Linear output layer
-            self.value_output = tf.contrib.layers.fully_connected(self.afc3, 1, 
-                                                            activation_fn=None)
-
-            # ReLU hidden layers
-            self.vfc1 = tf.contrib.layers.fully_connected(self.inputs, self._hidden_size)
-            self.vfc2 = tf.contrib.layers.fully_connected(self.vfc1, self._hidden_size)
-            self.vfc3 = tf.contrib.layers.fully_connected(self.vfc2, self._hidden_size)
-
-            # Linear output layer
-            self.advantage_output = tf.contrib.layers.fully_connected(self.vfc3, self._output_size, 
-                                                            activation_fn=None)
-
-            # aggregate output layer
-            self.aggregation_layer = self.value_output + (self.advantage_output - tf.reduce_mean(self.advantage_output, axis=1, keepdims=True))
-
-    def get_weights(self):
-        return self._networkGraph.get_weights(self._name)
-
-    def get_action(self, state):
-        Qs = self.get_Q_values(state)
-        action = np.argmax(Qs)
-        return action
-
-    def get_advantage_function(self, rewards, gamma, next_states, states):
-        advantage = self.get_target_Q_value(rewards, gamma, next_states) - self.get_value_function(states)
-        return advantage
-
-    def get_Q_values(self, states):
-        """ Get actions from Q-network """
-        states = np.asarray(states)
-        if states.ndim < 2:
-            states = states.reshape((1, *states.shape))
-        feed = {self.inputs: states}
-        Qs = self._networkGraph.apply_operation(self.aggregation_layer, feed_dict=feed)
-
-        # Set target_Qs to 0 for states where episode ends
-        episode_ends = (states == np.zeros(states[0].shape)).all(axis=1)
-        Qs[episode_ends] = np.zeros((self._output_size, ))
-
-        return Qs
-
-    def get_target_Q_value(self, reward, gamma, next_state):
-        target = reward + gamma * self.get_value_function(next_state)
-        return target
-
-    def get_value_function(self, states):
-        """ Get value function from Q-network """
-        Qs = self.get_Q_values(states)
-
-        value = np.max(Qs, axis=1)
-        return value
 
 def _pretrain_memory(env, memory, pretrain_length=20):
 

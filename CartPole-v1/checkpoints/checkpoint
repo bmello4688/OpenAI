@@ -1,2 +1,0 @@
-model_checkpoint_path: "c:\\Users\\Brian.Mello\\OpenAI\\CartPole-v1\\checkpoints/cartpolevduel.ckpt"
-all_model_checkpoint_paths: "c:\\Users\\Brian.Mello\\OpenAI\\CartPole-v1\\checkpoints/cartpolevduel.ckpt"

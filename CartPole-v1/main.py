@@ -31,7 +31,7 @@ action_size = 2
 hidden_size = 64               # number of units in each Q-network hidden layer
 learning_rate = 0.0001         # Q-network learning rate
 
-network = DuelingDQNetworkGraph('cartpolevduel', __file__, state_size, action_size, learning_rate, hidden_size)
+network = DoubleDQNetworkGraph('cartpolevduel', __file__, state_size, action_size, learning_rate, hidden_size)
 
 # Now train with experiences
 if network.are_weights_saved():
