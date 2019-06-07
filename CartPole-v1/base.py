@@ -1,35 +1,99 @@
 import os
 import tensorflow as tf
 import numpy as np
-from collections import deque
 from abc import ABC, abstractmethod
 import pickle
+from algorithms import sum_tree_with_data
 
 class Memory():
     def __init__(self, path_dir, max_size=1000):
+        self.PER_e = 0.01  # Hyperparameter that we use to avoid some experiences to have 0 probability of being taken
+        self.PER_a = 0.6  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
+        self.PER_b = 0.4  # importance-sampling, from initial value increasing to 1
+        self.PER_b_increment_per_sampling = 0.001
+        self.absolute_error_upper = 1.  # clipped abs error
+
         self._save_path = '{}checkpoints/{}'.format(path_dir, 'memory.p')
-        self._buffer = deque(maxlen=max_size)
+        self._tree = sum_tree_with_data(max_size)
 
     def get_number_of_memories(self):
-        return len(self._buffer)
+        return self._tree.count
     
-    def add(self, experience):
-        self._buffer.append(experience)
+    def store(self, experience):
+        # Find the max priority
+        max_priority = self._tree.get_max_leaf()
+        
+        # If the max priority = 0 we can't put priority = 0 since this exp will never have a chance to be selected
+        # So we use a minimum priority
+        if max_priority == 0:
+            max_priority = self.absolute_error_upper
+        
+        #set new experience as max priority so it is used
+        self._tree.add(max_priority, experience)
             
-    def get_experiences(self, batch_size):
+    def get_memories(self, batch_size):
+        # Create a sample array that will contains the minibatch
+        experiences = []
         memory_count = self.get_number_of_memories()
         if memory_count < batch_size:
             batch_size = memory_count
-        idx = np.random.choice(np.arange(memory_count), 
-                               size=batch_size, 
-                               replace=False)
-        return [self._buffer[ii] for ii in idx]
+        
+        experienceLocationIndices, experience_importances = np.empty((batch_size,), dtype=np.int32), np.empty((batch_size, 1), dtype=np.float32)
+        
+        # Calculate the priority segment
+        # Here, as explained in the paper, we divide the Range[0, ptotal] into n ranges
+        priority_segment = self._tree.total_sum / batch_size       # priority segment
+    
+        # Here we increasing the PER_b each time we sample a new minibatch
+        self.PER_b = np.min([self.absolute_error_upper, self.PER_b + self.PER_b_increment_per_sampling])  # max = 1
+        
+        # Calculating the max_weight
+        p_min = self._tree.get_min_leaf() / self._tree.total_sum
+        max_weight = (p_min * batch_size) ** (-self.PER_b) if p_min > 0 else 1
+        
+        for i in range(batch_size):
+            """
+            A value is uniformly sample from each range
+            """
+            a, b = priority_segment * i, priority_segment * (i + 1)
+            value = np.random.uniform(a, b)
+            
+            """
+            Experience that correspond to each value is retrieved
+            """
+            index, priority, experience = self._tree.get_leaf(value)
+            
+            #P(i)
+            importance_probability = priority / self._tree.total_sum
+            
+            #  IS = (1/N * 1/P(i))**b /max wi == (N*P(i))**-b  /max wi
+            importance_sampling_weights = np.power(batch_size * importance_probability, -self.PER_b)
+
+            
+            experience_importances[i, 0] = importance_sampling_weights / max_weight
+                                   
+            experienceLocationIndices[i]= index
+            
+            experiences.append(experience)
+        
+        return experienceLocationIndices, experiences, experience_importances
+    
+    """
+    Update the priorities on the tree
+    """
+    def update_memory_importances(self, experienceLocationIndices, abs_td_errors):
+        abs_td_errors += self.PER_e  # convert to abs and avoid 0
+        clipped_errors = np.minimum(abs_td_errors, self.absolute_error_upper)
+        priorities = np.power(clipped_errors, self.PER_a)
+
+        for eli, p in zip(experienceLocationIndices, priorities):
+            self._tree.update(eli, p)
 
     def load(self):
         if os.path.isfile(self._save_path):
-            self._buffer = pickle.load( open(self._save_path, "rb" ))
+            self.__dict__ = pickle.load( open(self._save_path, "rb" ))
     def save(self):
-        pickle.dump(self._buffer, open(self._save_path, "wb" ))
+        pickle.dump(self.__dict__, open(self._save_path, "wb" ))
         
 
 class NetworkGraph(ABC):
@@ -131,20 +195,26 @@ class QLearningLossFunction(LossFunction):
         # one value from output (per row) according to the one-hot encoded actions.
         Q = tf.reduce_sum(tf.multiply(self._output_layer, one_hot_actions), axis=1)
         
-        td_error = tf.square(self._targetQs - Q)
-        priority = tf.abs(td_error) + 0.001 #0.001 is used as a constant. Assures zero is not reached
-        loss = tf.reduce_mean(td_error)
-        opt = tf.train.AdamOptimizer(self._learning_rate).minimize(loss, var_list=self.weight_list)
-        self._operations_to_run = [loss, priority, opt]
+        # Add importance sampling weights place holder
+        # so we can correct the bias of prioritized experience replays
+        self._importance_sampling_weights = tf.placeholder(tf.float32, [None, 1], name='isw')
 
-    def run(self, states, actions, td_target):
+        td_error = self._targetQs - Q
+        abs_td_error = tf.abs(td_error)
+        # loss is modified because of PER bias
+        loss = tf.reduce_mean(self._importance_sampling_weights * tf.square(td_error))
+        opt = tf.train.AdamOptimizer(self._learning_rate).minimize(loss, var_list=self.weight_list)
+        self._operations_to_run = [loss, abs_td_error, opt]
+
+    def run(self, states, actions, td_target, importances_of_experience):
         return_operations = self._networkGraph.apply_operation(self._operations_to_run,
                                 feed_dict={self._input_layer: states,
                                            self._targetQs: td_target,
-                                           self._actions: actions})
+                                           self._actions: actions,
+                                           self._importance_sampling_weights: importances_of_experience})
         loss = return_operations[0]
-        priority = return_operations[1]
-        return loss, priority
+        abs_td_error = return_operations[1]
+        return loss, abs_td_error
 
 class DeepQNetworkSubgraph(NetworkSubgraph):
     def __init__(self, name, networkGraph, input_layer, output_layer):
@@ -232,5 +302,5 @@ class Agent(ABC):
         self.stop()
 
     @abstractmethod
-    def train():
+    def learn():
         pass

@@ -66,7 +66,8 @@ class DuelDoubleDQNetworkGraphWithFixedTarget(NetworkGraph):
     def update_target_network(self):
         self.apply_operation(self._update_target_network_op)
 
-    def train_on_experience(self, experiences, gamma):
+    def train_on_memories(self, memories, gamma):
+        _, experiences, experience_importances = memories
         states, actions, rewards, next_states = zip(*experiences)
 
         #single learning
@@ -76,9 +77,9 @@ class DuelDoubleDQNetworkGraphWithFixedTarget(NetworkGraph):
         predicted_next_actions = self._mainDQN.get_action(next_states)
         td_target = self._targetDQN.get_target_Q_value(rewards, gamma, next_states, predicted_next_actions)
 
-        loss, priority = self._loss_function.run(states, actions, td_target)
+        loss, abs_td_error = self._loss_function.run(states, actions, td_target, experience_importances)
 
-        return loss, priority
+        return loss, abs_td_error
 
 class QAgentWithAMemory(Agent):
     def __init__(self, weights_path, state_size, action_size, learning_rate, hidden_size, graph_results=False):
@@ -93,7 +94,7 @@ class QAgentWithAMemory(Agent):
             return (cumsum[N:] - cumsum[:-N]) / N 
 
 
-    def train(self, env, train_episodes = 100):
+    def learn(self, env, train_episodes = 100):
         # max number of episodes to learn from
         max_steps = 200                # max steps in an episode
         gamma = 0.99                   # future reward discount
@@ -151,7 +152,7 @@ class QAgentWithAMemory(Agent):
                     rewards_list.append((ep, total_reward))
                     
                     # Add experience to memory
-                    self.memory.add((state, action, reward, next_state))
+                    self.memory.store((state, action, reward, next_state))
                     
                     # Start new episode
                     env.reset()
@@ -160,14 +161,15 @@ class QAgentWithAMemory(Agent):
 
                 else:
                     # Add experience to memory
-                    self.memory.add((state, action, reward, next_state))
+                    self.memory.store((state, action, reward, next_state))
                     state = next_state
                     t += 1
                 
                 # Sample mini-batch from memory
-                experiences = self.memory.get_experiences(batch_size)
+                memories = self.memory.get_memories(batch_size)
                 
-                loss, priority = self._network.train_on_experience(experiences, gamma)
+                loss, abs_td_error = self._network.train_on_memories(memories, gamma)
+                self.memory.update_memory_importances(memories[0], abs_td_error)
 
             self._network.update_target_network()
 
