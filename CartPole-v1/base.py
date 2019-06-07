@@ -3,19 +3,34 @@ import tensorflow as tf
 import numpy as np
 from collections import deque
 from abc import ABC, abstractmethod
+import pickle
 
 class Memory():
-    def __init__(self, max_size=1000):
-        self.buffer = deque(maxlen=max_size)
+    def __init__(self, path_dir, max_size=1000):
+        self._save_path = '{}{}'.format(path_dir, 'memory.p')
+        self._buffer = deque(maxlen=max_size)
+
+    def get_number_of_memories(self):
+        return len(self._buffer)
     
     def add(self, experience):
-        self.buffer.append(experience)
+        self._buffer.append(experience)
             
-    def sample(self, batch_size):
-        idx = np.random.choice(np.arange(len(self.buffer)), 
+    def get_experiences(self, batch_size):
+        memory_count = self.get_number_of_memories()
+        if memory_count < batch_size:
+            batch_size = memory_count
+        idx = np.random.choice(np.arange(memory_count), 
                                size=batch_size, 
                                replace=False)
-        return [self.buffer[ii] for ii in idx]
+        return [self._buffer[ii] for ii in idx]
+
+    def load(self):
+        if os.path.isfile(self._save_path):
+            self._buffer = pickle.load( open(self._save_path, "rb" ))
+    def save(self):
+        pickle.dump(self._buffer, open(self._save_path, "wb" ))
+        
 
 class NetworkGraph(ABC):
     def _get_caller_path(self, path):
@@ -28,6 +43,8 @@ class NetworkGraph(ABC):
         self._caller_path = self._get_caller_path(weight_path)
         self._weightsFilePath = '{}checkpoints/{}.ckpt'.format(self._caller_path, name)
         self._graph = tf.Graph()
+        self.hyper_params_file = '{}checkpoints/hypers.p'.format(self._caller_path)
+        self.hyper_params = {}
         # state inputs to the Q-network
         with self._get_context():
             with tf.variable_scope(self.name):
@@ -50,10 +67,12 @@ class NetworkGraph(ABC):
 
     def save_weights(self):
         self.saver.save(self.session, self._weightsFilePath)
+        pickle.dump(self.hyper_params, open(self.hyper_params_file, "wb"))
         print("Model saved")
 
     def load_weights(self):
         self.saver.restore(self.session, self._weightsFilePath)
+        self.hyper_params = pickle.load(open(self.hyper_params_file, "rb"))
         print("Model restored")
 
     def are_weights_saved(self):
@@ -186,21 +205,22 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
         return value
 
 class Agent(ABC):
-
-    @abstractmethod
-    def train():
-        pass
-    @abstractmethod
-    def predict_action():
-        pass
-
-class QAgent(ABC):
-    def __init__(self, network):
+    def __init__(self, network, action_size, memory_size, path):
         self._network = network
+        self.action_size = action_size
+        self._dir_path = self._get_caller_path(path)
+        self.memory = Memory(self._dir_path, max_size=memory_size)
         if self.is_trained():
             self._network.load_weights()
+            self.memory.load()
+    def _get_caller_path(self, path):
+        if os.path.isfile(path):
+            path = os.path.dirname(os.path.realpath(path)) + '\\'
+        return path
     def is_trained(self):
         return self._network.are_weights_saved()
+    def choose_random_action(self):
+        return np.random.randint(self.action_size)
     def choose_action(self, state):
         return self._network.get_action(state)
     def stop(self):

@@ -1,6 +1,6 @@
 import gym
 import numpy as np
-from rl import QAgentWithReplay
+from rl import QAgentWithAMemory
 
 # Create the Cart-Pole game environment
 env = gym.make('CartPole-v1')
@@ -30,9 +30,9 @@ action_size = 2
 hidden_size = 64               # number of units in each Q-network hidden layer
 learning_rate = 0.0001         # Q-network learning rate
 
-with QAgentWithReplay(__file__, state_size, action_size, learning_rate, hidden_size) as agent:
+with QAgentWithAMemory(__file__, state_size, action_size, learning_rate, hidden_size) as agent:
 
-    agent.train(env, 600)
+    agent.train(env, 100)
 
     state = env.reset()
     rewards_list = 0
