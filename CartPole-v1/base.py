@@ -7,7 +7,7 @@ import pickle
 
 class Memory():
     def __init__(self, path_dir, max_size=1000):
-        self._save_path = '{}{}'.format(path_dir, 'memory.p')
+        self._save_path = '{}checkpoints/{}'.format(path_dir, 'memory.p')
         self._buffer = deque(maxlen=max_size)
 
     def get_number_of_memories(self):
