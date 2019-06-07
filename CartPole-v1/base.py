@@ -6,13 +6,14 @@ import pickle
 from algorithms import sum_tree_with_data
 
 class Memory():
-    def __init__(self, path_dir, max_size=1000):
+    def __init__(self, path_dir, batch_size, max_size=1000):
         self.PER_e_constant = 0.01  # Hyperparameter that we use to avoid some experiences to have 0 probability of being taken
         self.PER_alpha = 0.6  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
         self.PER_beta = 0.4  # importance-sampling, from initial value increasing to 1
         self.PER_beta_increment_per_sampling = 0.001
         self.max_td_priority = 1.  # clipped abs error
 
+        self._batch_size = batch_size
         self._save_path = '{}checkpoints/{}'.format(path_dir, 'memory.p')
         self._tree = sum_tree_with_data(max_size)
 
@@ -40,12 +41,14 @@ class Memory():
 
         return importance_sampling_weights
 
-    def get_memories(self, batch_size):
+    def get_memories(self):
         # Create a sample array that will contains the minibatch
         experiences = []
         memory_count = self.get_number_of_memories()
-        if memory_count < batch_size:
+        if memory_count < self._batch_size:
             batch_size = memory_count
+        else:
+            batch_size = self._batch_size
         
         experienceLocationIndices, experience_importances = np.empty((batch_size,), dtype=np.int32), np.empty((batch_size, 1), dtype=np.float32)
         
@@ -113,8 +116,6 @@ class NetworkGraph(ABC):
         self._caller_path = self._get_caller_path(weight_path)
         self._weightsFilePath = '{}checkpoints/{}.ckpt'.format(self._caller_path, name)
         self._graph = tf.Graph()
-        self.hyper_params_file = '{}checkpoints/hypers.p'.format(self._caller_path)
-        self.hyper_params = {}
         # state inputs to the Q-network
         with self._get_context():
             with tf.variable_scope(self.name):
@@ -137,13 +138,9 @@ class NetworkGraph(ABC):
 
     def save_weights(self):
         self.saver.save(self.session, self._weightsFilePath)
-        pickle.dump(self.hyper_params, open(self.hyper_params_file, "wb"))
-        print("Model saved")
 
     def load_weights(self):
         self.saver.restore(self.session, self._weightsFilePath)
-        self.hyper_params = pickle.load(open(self.hyper_params_file, "rb"))
-        print("Model restored")
 
     def are_weights_saved(self):
         return os.path.exists(self._weightsFilePath+ '.meta')
@@ -280,25 +277,52 @@ class DeepQNetworkSubgraph(NetworkSubgraph):
         value = np.max(Qs, axis=1)
         return value
 
-class Agent(ABC):
-    def __init__(self, network, action_size, memory_size, path):
+class Agent():
+    def __init__(self, network, action_size, memory_batch_size, memory_size, path, update_cadence):
+        # Exploration parameters(defaults)
+        self._explore_start = 1.0            # exploration probability at start
+        self._explore_stop = 0.01            # minimum exploration probability 
+        self._decay_rate = 0.0001            # exponential decay rate for exploration prob
+        self._gamma = 0.99                   # future reward discount
+        self._step = 0
+        self._update_cadence = update_cadence
         self._network = network
-        self.action_size = action_size
+        self._action_size = action_size
         self._dir_path = self._get_caller_path(path)
-        self.memory = Memory(self._dir_path, max_size=memory_size)
+        self._hyper_params_file = '{}checkpoints/hypers.p'.format(self._dir_path)
+        self._memory = Memory(self._dir_path, memory_batch_size, max_size=memory_size)
         if self.is_trained():
             self._network.load_weights()
-            self.memory.load()
+            self._memory.load()
+            self._load_hyper_params()
     def _get_caller_path(self, path):
         if os.path.isfile(path):
             path = os.path.dirname(os.path.realpath(path)) + '\\'
         return path
+    def get_exploration_probability(self):
+        return self._explore_stop + (self._explore_start - self._explore_stop)*np.exp(-self._decay_rate*self._step)
     def is_trained(self):
         return self._network.are_weights_saved()
-    def choose_random_action(self):
-        return np.random.randint(self.action_size)
-    def choose_action(self, state):
+    def _choose_random_action(self):
+        return np.random.randint(self._action_size)
+    def _determine_action(self, state):
         return self._network.get_action(state)
+    def choose_action(self, state):
+        # Explore or Exploit
+        explore_p = self.get_exploration_probability()
+        if explore_p > np.random.rand():
+            # Make a random action
+            action = self._choose_random_action()
+        else:
+            action = self._determine_action(state)
+
+        # do not stop experimenting until we have enough memory
+        if self._memory.get_number_of_memories() >= self._memory._batch_size:
+            self._step += 1
+
+        return action
+    def store_experience(self, experience):
+        self._memory.store(experience)
     def stop(self):
         self._network.close()
     #for using 'with'
@@ -307,6 +331,34 @@ class Agent(ABC):
     def __exit__(self, type, value, tb):
         self.stop()
 
-    @abstractmethod
-    def learn():
-        pass
+    def learn_from_experience(self):
+        # Sample mini-batch from memory
+        memories = self._memory.get_memories()
+                
+        loss, abs_td_error = self._network.train_on_memories(memories, self._gamma)
+        self._memory.update_memory_importances(memories[0], abs_td_error)
+
+        #if self._step % self._update_cadence == 0 and self._step > 0:
+        #    self.update_target()
+        
+        return loss
+
+    def update_target(self):
+        self._network.update_target_network()
+
+    def save(self):
+        self._save_hyper_params()
+        self._network.save_weights()
+        self._memory.save()
+    
+    def _save_hyper_params(self):
+        hyper_params = self.__dict__.copy()
+        del hyper_params['_network']
+        del hyper_params['_memory']
+        del hyper_params['_update_cadence']
+        pickle.dump(hyper_params, open(self._hyper_params_file, "wb"))
+    def _load_hyper_params(self):
+        if os.path.isfile(self._hyper_params_file):
+            hyper_params = pickle.load(open(self._hyper_params_file, "rb"))
+            for key, value in hyper_params.items():
+                self.__dict__[key] = value
