@@ -44,7 +44,7 @@ max_steps = 200                # max steps in an episode
 
 with QAgent(__file__, state_size, action_size, learning_rate, hidden_size) as agent:
 
-    train_episodes = 200
+    train_episodes = 350
     # Start new episode
     env.reset()
 
