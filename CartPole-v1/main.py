@@ -32,7 +32,7 @@ learning_rate = 0.0001         # Q-network learning rate
 
 with QAgentWithAMemory(__file__, state_size, action_size, learning_rate, hidden_size) as agent:
 
-    agent.learn(env, 100)
+    agent.learn(env, 350)
 
     state = env.reset()
     rewards_list = 0

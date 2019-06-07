@@ -7,11 +7,11 @@ from algorithms import sum_tree_with_data
 
 class Memory():
     def __init__(self, path_dir, max_size=1000):
-        self.PER_e = 0.01  # Hyperparameter that we use to avoid some experiences to have 0 probability of being taken
-        self.PER_a = 0.6  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
-        self.PER_b = 0.4  # importance-sampling, from initial value increasing to 1
-        self.PER_b_increment_per_sampling = 0.001
-        self.absolute_error_upper = 1.  # clipped abs error
+        self.PER_e_constant = 0.01  # Hyperparameter that we use to avoid some experiences to have 0 probability of being taken
+        self.PER_alpha = 0.6  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
+        self.PER_beta = 0.4  # importance-sampling, from initial value increasing to 1
+        self.PER_beta_increment_per_sampling = 0.001
+        self.max_td_priority = 1.  # clipped abs error
 
         self._save_path = '{}checkpoints/{}'.format(path_dir, 'memory.p')
         self._tree = sum_tree_with_data(max_size)
@@ -26,11 +26,20 @@ class Memory():
         # If the max priority = 0 we can't put priority = 0 since this exp will never have a chance to be selected
         # So we use a minimum priority
         if max_priority == 0:
-            max_priority = self.absolute_error_upper
+            max_priority = self.max_td_priority
         
         #set new experience as max priority so it is used
         self._tree.add(max_priority, experience)
-            
+    
+    def _get_importance_sampling_weights(self, priority, batch_size):
+        #P(i)
+        importance_probability = priority / self._tree.total_sum
+        
+        #  IS = (1/N * 1/P(i))**b == (N*P(i))**-b
+        importance_sampling_weights = np.power(batch_size * importance_probability, -self.PER_beta)
+
+        return importance_sampling_weights
+
     def get_memories(self, batch_size):
         # Create a sample array that will contains the minibatch
         experiences = []
@@ -44,12 +53,12 @@ class Memory():
         # Here, as explained in the paper, we divide the Range[0, ptotal] into n ranges
         priority_segment = self._tree.total_sum / batch_size       # priority segment
     
-        # Here we increasing the PER_b each time we sample a new minibatch
-        self.PER_b = np.min([self.absolute_error_upper, self.PER_b + self.PER_b_increment_per_sampling])  # max = 1
+        # Here we increasing the PER_beta each time we sample a new minibatch
+        self.PER_beta = np.min([1, self.PER_beta + self.PER_beta_increment_per_sampling])  # max = 1
         
         # Calculating the max_weight
-        p_min = self._tree.get_min_leaf() / self._tree.total_sum
-        max_weight = (p_min * batch_size) ** (-self.PER_b) if p_min > 0 else 1
+        lowest_priority = np.maximum(self._tree.get_min_leaf(), self.PER_e_constant) # if 0 set to constant
+        max_importance_sampling_weights = self._get_importance_sampling_weights(lowest_priority, batch_size)
         
         for i in range(batch_size):
             """
@@ -63,15 +72,11 @@ class Memory():
             """
             index, priority, experience = self._tree.get_leaf(value)
             
-            #P(i)
-            importance_probability = priority / self._tree.total_sum
-            
-            #  IS = (1/N * 1/P(i))**b /max wi == (N*P(i))**-b  /max wi
-            importance_sampling_weights = np.power(batch_size * importance_probability, -self.PER_b)
-
-            
-            experience_importances[i, 0] = importance_sampling_weights / max_weight
-                                   
+            importance_sampling_weights = self._get_importance_sampling_weights(priority, batch_size)
+                
+            #normalize if > 1
+            experience_importances[i, 0] = importance_sampling_weights / max_importance_sampling_weights
+                                    
             experienceLocationIndices[i]= index
             
             experiences.append(experience)
@@ -82,11 +87,12 @@ class Memory():
     Update the priorities on the tree
     """
     def update_memory_importances(self, experienceLocationIndices, abs_td_errors):
-        abs_td_errors += self.PER_e  # convert to abs and avoid 0
-        clipped_errors = np.minimum(abs_td_errors, self.absolute_error_upper)
-        priorities = np.power(clipped_errors, self.PER_a)
+        #apply alpha after first use
+        td_priorities = np.minimum(abs_td_errors + self.PER_e_constant, self.max_td_priority)  # avoid 0
+        #max priority is 1
+        td_priorities = np.power(td_priorities, self.PER_alpha)
 
-        for eli, p in zip(experienceLocationIndices, priorities):
+        for eli, p in zip(experienceLocationIndices, td_priorities):
             self._tree.update(eli, p)
 
     def load(self):
