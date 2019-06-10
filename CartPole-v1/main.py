@@ -62,7 +62,7 @@ with QAgent(__file__, state_size, action_size, learning_rate, hidden_size) as ag
             # env.render() 
 
             # Take action, get new state and reward
-            action = agent.choose_action(state)
+            action = agent.act(state)
             next_state, reward, done, _ = env.step(action)
         
             total_reward += reward
@@ -110,7 +110,7 @@ with QAgent(__file__, state_size, action_size, learning_rate, hidden_size) as ag
     rewards_list = 0
     while True:
         env.render()
-        action = agent.choose_action(state)
+        action = agent.act(state)
         state, reward, done, _ = env.step(action)
         rewards_list += reward
         if done:

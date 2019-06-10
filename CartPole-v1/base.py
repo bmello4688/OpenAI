@@ -305,16 +305,16 @@ class Agent():
         return self._network.are_weights_saved()
     def _choose_random_action(self):
         return np.random.randint(self._action_size)
-    def _determine_action(self, state):
+    def _choose_action(self, state):
         return self._network.get_action(state)
-    def choose_action(self, state):
+    def act(self, state):
         # Explore or Exploit
         explore_p = self.get_exploration_probability()
         if explore_p > np.random.rand():
             # Make a random action
             action = self._choose_random_action()
         else:
-            action = self._determine_action(state)
+            action = self._choose_action(state)
 
         # do not stop experimenting until we have enough memory
         if self._memory.get_number_of_memories() >= self._memory._batch_size:
